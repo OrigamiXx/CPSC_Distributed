@@ -1,0 +1,28 @@
+Scan Parallel Benchmark
+
+Showing nodes accounting for 76.91s, 84.14% of 91.41s total
+Dropped 231 nodes (cum <= 0.46s)
+Showing top 10 nodes out of 82
+      flat  flat%   sum%        cum   cum%
+    30.99s 33.90% 33.90%     30.99s 33.90%  cmpbody
+    24.40s 26.69% 60.60%     35.04s 38.33%  runtime.mapiternext
+     5.35s  5.85% 66.45%     77.83s 85.14%  cs426.yale.edu/lab0.(*StripedStringSet).singlePredRange
+     3.49s  3.82% 70.27%      3.49s  3.82%  runtime.madvise
+     3.11s  3.40% 73.67%      3.11s  3.40%  runtime.procyield
+     2.95s  3.23% 76.90%      2.95s  3.23%  runtime.add
+     2.72s  2.98% 79.87%      2.77s  3.03%  runtime.usleep
+     1.56s  1.71% 81.58%      2.69s  2.94%  runtime.findObject
+     1.19s  1.30% 82.88%      1.19s  1.30%  runtime.pthread_kill
+     1.15s  1.26% 84.14%      1.15s  1.26%  runtime.isEmpty
+
+
+iterate through the entire set across all stripes each time a count is needed;
+This is always the worst choice, certainly worse than keeping a local counter in every stripe.
+
+keep a per-stripe counter and add up counters from every stripe when queried;
+This might be better than method 3 for larger operations since keeping a global counter requires a global lock when we try to update the global counter, leading to
+a lot of lock contention. It might be just faster to compute total using a local counter, when can be updated using a local lock.
+
+keep a global (i.e., one single) counter that gets updated when a string is added; (See atomic counters.)
+This is the fastest for smaller operations, and carries the merit of not having to compute, just grab it from the global counter which is constantly updated,
+but certainly do suffers as the task get larger and we need to use a global lock to update this counter.

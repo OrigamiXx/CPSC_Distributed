@@ -2,6 +2,7 @@ package string_set
 
 import (
 	// "fmt"
+	"regexp"
 	"sync"
 )
 
@@ -19,7 +20,7 @@ type StringSet interface {
 }
 
 type LockedStringSet struct {
-	mu  sync.Mutex
+	mu  sync.RWMutex
 	set map[string]bool
 }
 
@@ -47,5 +48,13 @@ func (stringSet *LockedStringSet) Count() int {
 }
 
 func (stringSet *LockedStringSet) PredRange(begin string, end string, pattern string) []string {
-	return make([]string, 0)
+	var out []string
+	re := regexp.MustCompile(pattern)
+
+	for k := range stringSet.set {
+		if k >= begin && k < end && re.Match([]byte(k)) {
+			out = append(out, k)
+		}
+	}
+	return out
 }
