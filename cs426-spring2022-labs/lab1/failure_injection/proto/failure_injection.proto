@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package failure_injection;
+
+option go_package = "cs426.yale.edu/lab1/failure_injection/proto";
+
+message InjectionConfig {
+    // 0 == no latency injection
+    int64 sleep_ns = 1;
+    // inject hard failure one in failure_rate requests
+    // 0 == turn off injection
+    int64 failure_rate = 2;
+    // inject response omission failure one in omission_response_rate requests
+    // 0 == turn off injection
+    int64 response_omission_rate = 3;
+};
+
+message SetInjectionConfigRequest {
+    InjectionConfig config = 1;
+};
+
+message SetInjectionConfigResponse {};

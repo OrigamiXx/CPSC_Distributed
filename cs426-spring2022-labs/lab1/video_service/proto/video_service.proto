@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package video_service;
+
+option go_package = "cs426.yale.edu/lab1/video_service/proto";
+
+import "failure_injection/proto/failure_injection.proto";
+
+message VideoCoefficients {
+    // a map of feature id to coefficient representing a sparse vector.
+    map<int32, uint64> coeffs = 1;
+}
+
+message GetVideoRequest {
+    repeated uint64 video_ids = 1;
+}
+
+message VideoInfo {
+    uint64 video_id = 1;
+    string title = 2;
+    string author = 3;
+    string url = 4;
+
+    // ranking coefficients for the video
+    VideoCoefficients video_coefficients = 5;
+}
+
+message GetVideoResponse {
+    repeated VideoInfo videos = 1;
+}
+
+message GetTrendingVideosRequest {}
+
+message GetTrendingVideosResponse {
+    // video_ids of the trending videos
+    repeated uint64 videos = 1;
+    // unix timestamp of when to consider this trending videos response obsolete
+    uint64 expiration_time_s = 2;
+}
+
+service VideoService {
+    rpc GetVideo(GetVideoRequest) returns (GetVideoResponse);
+    rpc GetTrendingVideos(GetTrendingVideosRequest) returns (GetTrendingVideosResponse);
+
+    // Admin API for failure injection
+    rpc SetInjectionConfig(failure_injection.SetInjectionConfigRequest) returns(failure_injection.SetInjectionConfigResponse) {}
+}

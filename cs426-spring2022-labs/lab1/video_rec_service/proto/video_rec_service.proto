@@ -1,0 +1,39 @@
+syntax = "proto3";
+
+package video_rec_service;
+
+option go_package = "cs426.yale.edu/lab1/video_rec_service/proto";
+
+import "video_service/proto/video_service.proto";
+
+message GetTopVideosRequest {
+    uint64 user_id = 1;
+    // optional limit of the number of results to return
+    int32 limit = 2;
+}
+
+message GetTopVideosResponse {
+    repeated video_service.VideoInfo videos = 1;
+
+    bool stale_response = 2;
+}
+
+message GetStatsRequest {}
+
+message GetStatsResponse {
+    uint64 total_requests = 1;
+    uint64 total_errors = 2;
+    uint64 active_requests = 3;
+    uint64 user_service_errors = 4;
+    uint64 video_service_errors = 5;
+    float average_latency_ms = 6;
+    float p99_latency_ms = 7; // ExtraCredit3
+    uint64 stale_responses = 8; // For part C
+}
+
+service VideoRecService {
+    rpc GetTopVideos(GetTopVideosRequest) returns(GetTopVideosResponse);
+
+    // monitoring APIs
+    rpc GetStats(GetStatsRequest) returns(GetStatsResponse);
+}
