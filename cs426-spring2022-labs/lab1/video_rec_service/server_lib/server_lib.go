@@ -133,6 +133,12 @@ func (server *VideoRecServiceServer) GetTopVideos(ctx context.Context, req *pb.G
 	user_conn, err := grpc.Dial(ops.UserServiceAddr, opts...)
 
 	if err != nil {
+		if !server.options.DisableRetry {
+			user_conn, err = grpc.Dial(ops.UserServiceAddr, opts...)
+		}
+	} //retry
+
+	if err != nil {
 		server.mu.Lock()
 		server.UserServiceErrors += 1
 		server.TotalErrors += 1
@@ -147,7 +153,12 @@ func (server *VideoRecServiceServer) GetTopVideos(ctx context.Context, req *pb.G
 	request1 := upb.GetUserRequest{UserIds: []uint64{userid}}
 	user, err := userClient.GetUser(ctx, &request1)
 
-	// fmt.Println(user)
+	if err != nil {
+		if !server.options.DisableRetry {
+			user, err = userClient.GetUser(ctx, &request1)
+		}
+	} //retry
+
 	if err != nil {
 		server.mu.Lock()
 		server.UserServiceErrors += 1
@@ -169,6 +180,13 @@ func (server *VideoRecServiceServer) GetTopVideos(ctx context.Context, req *pb.G
 	for i := 0; i <= len(subscribed)-batchsize; i = i + batchsize {
 		request2 := upb.GetUserRequest{UserIds: subscribed[i : i+batchsize]}
 		users, err := userClient.GetUser(ctx, &request2)
+
+		if err != nil {
+			if !server.options.DisableRetry {
+				users, err = userClient.GetUser(ctx, &request2)
+			}
+		} //retry
+
 		if err != nil {
 			server.mu.Lock()
 			server.UserServiceErrors += 1
@@ -186,6 +204,13 @@ func (server *VideoRecServiceServer) GetTopVideos(ctx context.Context, req *pb.G
 	if len(subscribed)%batchsize != 0 {
 		request2 := upb.GetUserRequest{UserIds: subscribed[len(subscribed)-len(subscribed)%batchsize:]}
 		users, err := userClient.GetUser(ctx, &request2)
+
+		if err != nil {
+			if !server.options.DisableRetry {
+				users, err = userClient.GetUser(ctx, &request2)
+			}
+		} //retry
+
 		if err != nil {
 			server.mu.Lock()
 			server.UserServiceErrors += 1
@@ -213,6 +238,13 @@ func (server *VideoRecServiceServer) GetTopVideos(ctx context.Context, req *pb.G
 	// fmt.Println(vids)
 
 	video_conn, err := grpc.Dial(ops.VideoServiceAddr, opts...)
+
+	if err != nil {
+		if !server.options.DisableRetry {
+			video_conn, err = grpc.Dial(ops.VideoServiceAddr, opts...)
+		}
+	} //retry
+
 	if err != nil {
 		server.mu.Lock()
 		server.VideoServiceErrors += 1
@@ -228,6 +260,13 @@ func (server *VideoRecServiceServer) GetTopVideos(ctx context.Context, req *pb.G
 	for i := 0; i <= len(vids)-batchsize; i = i + batchsize {
 		request3 := vpb.GetVideoRequest{VideoIds: vids[i : i+batchsize]}
 		vid_batch, err := videoClient.GetVideo(ctx, &request3)
+
+		if err != nil {
+			if !server.options.DisableRetry {
+				vid_batch, err = videoClient.GetVideo(ctx, &request3)
+			}
+		} //retry
+
 		if err != nil {
 			server.mu.Lock()
 			server.VideoServiceErrors += 1
@@ -245,6 +284,13 @@ func (server *VideoRecServiceServer) GetTopVideos(ctx context.Context, req *pb.G
 	if len(vids)%batchsize != 0 {
 		request3 := vpb.GetVideoRequest{VideoIds: vids[len(vids)-len(vids)%batchsize:]}
 		vid_batch, err := videoClient.GetVideo(ctx, &request3)
+
+		if err != nil {
+			if !server.options.DisableRetry {
+				vid_batch, err = videoClient.GetVideo(ctx, &request3)
+			}
+		} //retry
+
 		if err != nil {
 			server.mu.Lock()
 			server.VideoServiceErrors += 1
