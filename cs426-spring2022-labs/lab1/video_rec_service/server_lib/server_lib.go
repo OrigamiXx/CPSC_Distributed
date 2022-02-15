@@ -3,7 +3,6 @@ package server_lib
 import (
 	"context"
 
-	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -51,6 +50,9 @@ type VideoRecServiceServer struct {
 	VideoServiceErrors uint64
 	AverageLatencyMs   float32
 	mu                 sync.RWMutex
+	mockuserclient     umc.MockUserServiceClient
+	mockvideoclient    vmc.MockVideoServiceClient
+	testing            bool
 }
 
 func MakeVideoRecServiceServer(options VideoRecServiceOptions) *VideoRecServiceServer {
@@ -62,6 +64,7 @@ func MakeVideoRecServiceServer(options VideoRecServiceOptions) *VideoRecServiceS
 		UserServiceErrors:  0,
 		VideoServiceErrors: 0,
 		AverageLatencyMs:   0,
+		testing:            false,
 		// Add any data to initialize here
 	}
 }
@@ -70,7 +73,16 @@ func MakeVideoRecServiceServerWithMocks(options VideoRecServiceOptions, mockUser
 	// Implement your own logic here
 
 	return &VideoRecServiceServer{
-		options: options,
+		options:            options,
+		mockuserclient:     *mockUserServiceClient,
+		mockvideoclient:    *mockVideoServiceClient,
+		testing:            true,
+		TotalRequests:      0,
+		TotalErrors:        0,
+		ActiveRequests:     0,
+		UserServiceErrors:  0,
+		VideoServiceErrors: 0,
+		AverageLatencyMs:   0,
 		// ...
 	}
 }
@@ -91,7 +103,7 @@ func (server *VideoRecServiceServer) GetStats(ctx context.Context, req *pb.GetSt
 		ActiveRequests:     server.ActiveRequests,
 		UserServiceErrors:  server.UserServiceErrors,
 		VideoServiceErrors: server.VideoServiceErrors,
-		AverageLatencyMs:   server.AverageLatencyMs}, status.Error(codes.OK, "OK")
+		AverageLatencyMs:   server.AverageLatencyMs * 1e-6}, status.Error(codes.OK, "OK")
 }
 
 // type GetStatsResponse struct {
@@ -113,14 +125,17 @@ type videoScore struct {
 func (server *VideoRecServiceServer) GetTopVideos(ctx context.Context, req *pb.GetTopVideosRequest) (*pb.GetTopVideosResponse, error) {
 	server.mu.Lock()
 	server.ActiveRequests += 1
-	server.TotalRequests += 1
 	server.mu.Unlock()
 
 	start := time.Now()
 	defer func() {
+		end := time.Since(start)
+		// fmt.Println(end)
 		server.mu.Lock()
 		server.ActiveRequests -= 1
-		server.AverageLatencyMs = (server.AverageLatencyMs*float32(server.TotalRequests-1) + float32(time.Since(start)-100)) / float32(server.TotalErrors)
+		server.AverageLatencyMs = (server.AverageLatencyMs*float32(server.TotalRequests) + float32(end)) / float32(server.TotalRequests+1)
+		// fmt.Println(server.AverageLatencyMs)
+		server.TotalRequests += 1
 		server.mu.Unlock()
 	}()
 
@@ -130,26 +145,34 @@ func (server *VideoRecServiceServer) GetTopVideos(ctx context.Context, req *pb.G
 	ops := server.options
 	batchsize := ops.MaxBatchSize
 	// fmt.Println(ops)
-	user_conn, err := grpc.Dial(ops.UserServiceAddr, opts...)
 
-	if err != nil {
-		if !server.options.DisableRetry {
-			user_conn, err = grpc.Dial(ops.UserServiceAddr, opts...)
+	var user_conn *grpc.ClientConn
+	var userClient upb.UserServiceClient
+	var err error
+	if server.testing {
+		// fmt.Println("Using Mock UserClient")
+		userClient = &server.mockuserclient
+	} else {
+		user_conn, err = grpc.Dial(ops.UserServiceAddr, opts...)
+
+		if err != nil {
+			if !server.options.DisableRetry {
+				user_conn, err = grpc.Dial(ops.UserServiceAddr, opts...)
+			}
+		} //retry
+
+		if err != nil {
+			server.mu.Lock()
+			server.UserServiceErrors += 1
+			server.TotalErrors += 1
+			server.mu.Unlock()
+			return nil, status.Error(codes.Aborted, "User Service Dial Failed")
 		}
-	} //retry
-
-	if err != nil {
-		server.mu.Lock()
-		server.UserServiceErrors += 1
-		server.TotalErrors += 1
-		server.mu.Unlock()
-		return nil, status.Error(codes.Aborted, "User Service Dial Failed")
+		defer user_conn.Close()
+		userClient = upb.NewUserServiceClient(user_conn)
 	}
-	defer user_conn.Close()
 
-	userClient := upb.NewUserServiceClient(user_conn)
 	userid := req.UserId
-
 	request1 := upb.GetUserRequest{UserIds: []uint64{userid}}
 	user, err := userClient.GetUser(ctx, &request1)
 
@@ -173,7 +196,7 @@ func (server *VideoRecServiceServer) GetTopVideos(ctx context.Context, req *pb.G
 	}
 
 	subscribed := user.Users[0].SubscribedTo
-	fmt.Println(len(subscribed))
+	// fmt.Println(len(subscribed))
 	coef := user.Users[0].UserCoefficients
 	var liked []*upb.UserInfo
 
@@ -237,24 +260,32 @@ func (server *VideoRecServiceServer) GetTopVideos(ctx context.Context, req *pb.G
 	}
 	// fmt.Println(vids)
 
-	video_conn, err := grpc.Dial(ops.VideoServiceAddr, opts...)
+	var video_conn *grpc.ClientConn
+	var videoClient vpb.VideoServiceClient
+	// var err error
+	if server.testing {
+		// fmt.Println("Using Mock VideoClient")
+		videoClient = &server.mockvideoclient
+	} else {
+		video_conn, err = grpc.Dial(ops.VideoServiceAddr, opts...)
 
-	if err != nil {
-		if !server.options.DisableRetry {
-			video_conn, err = grpc.Dial(ops.VideoServiceAddr, opts...)
+		if err != nil {
+			if !server.options.DisableRetry {
+				video_conn, err = grpc.Dial(ops.VideoServiceAddr, opts...)
+			}
+		} //retry
+
+		if err != nil {
+			server.mu.Lock()
+			server.VideoServiceErrors += 1
+			server.TotalErrors += 1
+			server.mu.Unlock()
+			return nil, status.Error(codes.Aborted, "Video Service Dial Failed")
 		}
-	} //retry
-
-	if err != nil {
-		server.mu.Lock()
-		server.VideoServiceErrors += 1
-		server.TotalErrors += 1
-		server.mu.Unlock()
-		return nil, status.Error(codes.Aborted, "Video Service Dial Failed")
+		defer video_conn.Close()
+		videoClient = vpb.NewVideoServiceClient(video_conn)
 	}
-	defer video_conn.Close()
 
-	videoClient := vpb.NewVideoServiceClient(video_conn)
 	var videos []*vpb.VideoInfo
 
 	for i := 0; i <= len(vids)-batchsize; i = i + batchsize {
