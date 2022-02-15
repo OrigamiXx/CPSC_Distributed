@@ -2,6 +2,7 @@ package server_lib
 
 import (
 	"context"
+	"fmt"
 
 	"sort"
 	"sync"
@@ -36,7 +37,9 @@ func DefaultVideoRecServiceOptions() VideoRecServiceOptions {
 	return VideoRecServiceOptions{
 		UserServiceAddr:  "[::1]:8081",
 		VideoServiceAddr: "[::1]:8082",
-		MaxBatchSize:     250,
+		MaxBatchSize:     10,
+		DisableRetry:     false,
+		DisableFallback:  false,
 	}
 }
 
@@ -48,11 +51,15 @@ type VideoRecServiceServer struct {
 	ActiveRequests     uint64
 	UserServiceErrors  uint64
 	VideoServiceErrors uint64
+	StaleResponses     uint64
 	AverageLatencyMs   float32
 	mu                 sync.RWMutex
 	mockuserclient     umc.MockUserServiceClient
 	mockvideoclient    vmc.MockVideoServiceClient
 	testing            bool
+	fetching           bool
+	ch                 chan []*vpb.VideoInfo
+	trendings          []*vpb.VideoInfo
 }
 
 func MakeVideoRecServiceServer(options VideoRecServiceOptions) *VideoRecServiceServer {
@@ -64,7 +71,10 @@ func MakeVideoRecServiceServer(options VideoRecServiceOptions) *VideoRecServiceS
 		UserServiceErrors:  0,
 		VideoServiceErrors: 0,
 		AverageLatencyMs:   0,
+		StaleResponses:     0,
 		testing:            false,
+		fetching:           false,
+		ch:                 make(chan []*vpb.VideoInfo, 1),
 		// Add any data to initialize here
 	}
 }
@@ -83,6 +93,9 @@ func MakeVideoRecServiceServerWithMocks(options VideoRecServiceOptions, mockUser
 		UserServiceErrors:  0,
 		VideoServiceErrors: 0,
 		AverageLatencyMs:   0,
+		StaleResponses:     0,
+		fetching:           false,
+		ch:                 make(chan []*vpb.VideoInfo, 1),
 		// ...
 	}
 }
@@ -103,7 +116,8 @@ func (server *VideoRecServiceServer) GetStats(ctx context.Context, req *pb.GetSt
 		ActiveRequests:     server.ActiveRequests,
 		UserServiceErrors:  server.UserServiceErrors,
 		VideoServiceErrors: server.VideoServiceErrors,
-		AverageLatencyMs:   server.AverageLatencyMs * 1e-6}, status.Error(codes.OK, "OK")
+		AverageLatencyMs:   server.AverageLatencyMs * 1e-6,
+		StaleResponses:     server.StaleResponses}, status.Error(codes.OK, "OK")
 }
 
 // type GetStatsResponse struct {
@@ -123,6 +137,11 @@ type videoScore struct {
 }
 
 func (server *VideoRecServiceServer) GetTopVideos(ctx context.Context, req *pb.GetTopVideosRequest) (*pb.GetTopVideosResponse, error) {
+	var opts []grpc.DialOption
+	opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	ops := server.options
+	batchsize := ops.MaxBatchSize
+
 	server.mu.Lock()
 	server.ActiveRequests += 1
 	server.mu.Unlock()
@@ -138,13 +157,6 @@ func (server *VideoRecServiceServer) GetTopVideos(ctx context.Context, req *pb.G
 		server.TotalRequests += 1
 		server.mu.Unlock()
 	}()
-
-	var opts []grpc.DialOption
-	opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
-
-	ops := server.options
-	batchsize := ops.MaxBatchSize
-	// fmt.Println(ops)
 
 	var user_conn *grpc.ClientConn
 	var userClient upb.UserServiceClient
@@ -260,6 +272,16 @@ func (server *VideoRecServiceServer) GetTopVideos(ctx context.Context, req *pb.G
 	}
 	// fmt.Println(vids)
 
+	// var trendings []*vpb.VideoInfo
+	if len(server.ch) > 0 && !server.options.DisableFallback {
+		fmt.Println("Receiving trending videos")
+		server.trendings = <-server.ch
+	}
+	if len(server.trendings) > 0 {
+		fmt.Println(server.trendings[0].Title)
+		fmt.Println(server.trendings[0].VideoId)
+	}
+
 	var video_conn *grpc.ClientConn
 	var videoClient vpb.VideoServiceClient
 	// var err error
@@ -280,10 +302,84 @@ func (server *VideoRecServiceServer) GetTopVideos(ctx context.Context, req *pb.G
 			server.VideoServiceErrors += 1
 			server.TotalErrors += 1
 			server.mu.Unlock()
+			if !server.options.DisableFallback {
+				if len(server.ch) > 0 {
+					fmt.Println("Receiving trending videos")
+					server.trendings = <-server.ch
+				}
+				if server.trendings != nil {
+					out := pb.GetTopVideosResponse{Videos: server.trendings, StaleResponse: true}
+					server.mu.Lock()
+					server.StaleResponses += 1
+					server.mu.Unlock()
+					fmt.Println("Giving stale response")
+					return &out, status.Error(codes.Aborted, "Video Service Dial Failed, trending videos returned")
+				}
+			}
 			return nil, status.Error(codes.Aborted, "Video Service Dial Failed")
 		}
 		defer video_conn.Close()
 		videoClient = vpb.NewVideoServiceClient(video_conn)
+	}
+
+	if !server.fetching && !server.options.DisableFallback {
+		server.fetching = true
+
+		go func() {
+			fmt.Println("Fetching routine running...")
+			var err error
+			var trends *vpb.GetTrendingVideosResponse
+			var obsolete uint64
+			var videos []*vpb.VideoInfo
+			var done bool
+			obsolete = 0
+
+			for {
+				fmt.Println(obsolete)
+				fmt.Println(uint64(time.Now().Unix()))
+				if uint64(time.Now().Unix()) > obsolete {
+					trends, err = videoClient.GetTrendingVideos(ctx, &vpb.GetTrendingVideosRequest{})
+					if err != nil {
+						time.Sleep(10 * time.Second)
+					} else {
+						fmt.Println("Fetching new trendings...")
+						fmt.Println(len(trends.Videos))
+						videos = nil
+						done = true
+						for i := 0; i <= len(trends.Videos)-batchsize; i = i + batchsize {
+							vid_batch, err := videoClient.GetVideo(ctx, &vpb.GetVideoRequest{VideoIds: trends.Videos[i : i+batchsize]})
+							if err != nil {
+								done = false
+								break
+							} else {
+								videos = append(videos, vid_batch.Videos...)
+							}
+						}
+						if len(vids)%batchsize != 0 && done {
+							vid_batch, err := videoClient.GetVideo(ctx, &vpb.GetVideoRequest{VideoIds: trends.Videos[len(trends.Videos)-len(trends.Videos)%batchsize:]})
+							if err != nil {
+								done = false
+							} else {
+								videos = append(videos, vid_batch.Videos...)
+							}
+						}
+						if !done {
+							time.Sleep(10 * time.Second)
+						} else {
+							obsolete = trends.ExpirationTimeS
+							fmt.Println(len(server.ch))
+							if len(server.ch) > 0 {
+								fmt.Println("Clearing...")
+								<-server.ch
+							}
+							fmt.Println("Sending trending videos...")
+							server.ch <- videos
+						}
+					}
+				}
+				time.Sleep(2 * time.Second)
+			}
+		}()
 	}
 
 	var videos []*vpb.VideoInfo
@@ -308,6 +404,20 @@ func (server *VideoRecServiceServer) GetTopVideos(ctx context.Context, req *pb.G
 			} else {
 				err = status.Errorf(e.Code(), "Error at 3 video service call: %q.", e.Code())
 			}
+			if !server.options.DisableFallback {
+				if len(server.ch) > 0 {
+					fmt.Println("Receiving trending videos")
+					server.trendings = <-server.ch
+				}
+				if server.trendings != nil {
+					out := pb.GetTopVideosResponse{Videos: server.trendings, StaleResponse: true}
+					server.mu.Lock()
+					server.StaleResponses += 1
+					server.mu.Unlock()
+					fmt.Println("Giving stale response")
+					return &out, err
+				}
+			}
 			return nil, err
 		}
 		videos = append(videos, vid_batch.Videos...)
@@ -331,6 +441,20 @@ func (server *VideoRecServiceServer) GetTopVideos(ctx context.Context, req *pb.G
 				err = status.Errorf(e.Code(), "Error at 3 video service call: %q.", e.Code())
 			} else {
 				err = status.Errorf(e.Code(), "Error at 3 video service call: %q.", e.Code())
+			}
+			if !server.options.DisableFallback {
+				if len(server.ch) > 0 {
+					fmt.Println("Receiving trending videos")
+					server.trendings = <-server.ch
+				}
+				if server.trendings != nil {
+					out := pb.GetTopVideosResponse{Videos: server.trendings, StaleResponse: true}
+					server.mu.Lock()
+					server.StaleResponses += 1
+					server.mu.Unlock()
+					fmt.Println("Giving stale response")
+					return &out, err
+				}
 			}
 			return nil, err
 		}
