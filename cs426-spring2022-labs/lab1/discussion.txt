@@ -1,0 +1,27 @@
+Discussion
+
+A1
+Dial() is quite similar to socket() and connect(), in the sense it establishes a connection by giving an address and then allocating the necessary port and resource for the connection.
+This is cooperated by the listen() on the server side.
+
+A2
+Many issues could possibly cause a dial failure.
+Bad connection, slow internet -- DeadlineExceeded, as name suggests, operation expired before completion
+Server broken -- Internal, bad programming, wrong intructions, etc.
+Other errors such bad error codes returned, rare issues -- Unknown
+No ports available -- ResourceExhausted or Unavailable, I incline to ResourceExhausted which indiates the requested port is busy now
+
+A3
+When GetUser is called, send(), recv() are definitely used, in the sense that client sends a request rpc, and server receives it. Vice versa. During these calls the standard
+read() and write() system calls will be used. These functions might throw errors when there is a sigmentation fault or mathematics fault(like divide by 0). read() and write() can generate these
+basic sigmentation fault or mathematics fault, but when it propagates to the network errors it will be shown as internal errors. In terms of network issues, an expired connection
+may give a timeout error or a DeadlineExceeded code,
+
+In addition to those, GetUser() may have its own checks that still throw errors even if all related netorks are fine. It might throw a NotFound code if the user looked for is NotFound
+found, or Unimplemented or the service is unfinished.
+
+A4
+I believe if you do so in only one call, it will be fine.
+
+However, in concurrent situations this will definitely cause issues, since there are many threads at different stages of the call thus using the conn variable for different
+purposes. It will likely fail after a certain amount of concurrent calls and yield a large amount of failed calls.
