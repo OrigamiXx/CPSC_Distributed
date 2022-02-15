@@ -52,14 +52,16 @@ type VideoRecServiceServer struct {
 	UserServiceErrors  uint64
 	VideoServiceErrors uint64
 	StaleResponses     uint64
+	P99LatencyMs       float32
 	AverageLatencyMs   float32
 	mu                 sync.RWMutex
-	mo                 sync.RWMutex
-	mockuserclient     umc.MockUserServiceClient
-	mockvideoclient    vmc.MockVideoServiceClient
-	testing            bool
-	fetching           bool
-	obsolete           uint64
+	// mo                 sync.RWMutex
+	mockuserclient  umc.MockUserServiceClient
+	mockvideoclient vmc.MockVideoServiceClient
+	testing         bool
+	fetching        bool
+	obsolete        uint64
+	times           []float64
 	// ch                 chan []*vpb.VideoInfo
 	trendings []*vpb.VideoInfo
 	// videoClient vpb.VideoServiceClient
@@ -76,6 +78,8 @@ func MakeVideoRecServiceServer(options VideoRecServiceOptions) *VideoRecServiceS
 		VideoServiceErrors: 0,
 		AverageLatencyMs:   0,
 		StaleResponses:     0,
+		P99LatencyMs:       0,
+		times:              []float64{0},
 		testing:            false,
 		fetching:           false,
 		obsolete:           0,
@@ -97,7 +101,9 @@ func MakeVideoRecServiceServerWithMocks(options VideoRecServiceOptions, mockUser
 		ActiveRequests:     0,
 		UserServiceErrors:  0,
 		VideoServiceErrors: 0,
+		P99LatencyMs:       0,
 		AverageLatencyMs:   0,
+		times:              []float64{0},
 		StaleResponses:     0,
 		fetching:           false,
 		obsolete:           0,
@@ -116,6 +122,11 @@ func contains(s []uint64, num uint64) bool {
 }
 
 func (server *VideoRecServiceServer) GetStats(ctx context.Context, req *pb.GetStatsRequest) (*pb.GetStatsResponse, error) {
+	server.mu.Lock()
+	sort.Float64s(server.times)
+	server.mu.Unlock()
+	result := len(server.times) / 100
+
 	return &pb.GetStatsResponse{
 		TotalRequests:      server.TotalRequests,
 		TotalErrors:        server.TotalErrors,
@@ -123,7 +134,8 @@ func (server *VideoRecServiceServer) GetStats(ctx context.Context, req *pb.GetSt
 		UserServiceErrors:  server.UserServiceErrors,
 		VideoServiceErrors: server.VideoServiceErrors,
 		AverageLatencyMs:   server.AverageLatencyMs * 1e-6,
-		StaleResponses:     server.StaleResponses}, status.Error(codes.OK, "OK")
+		StaleResponses:     server.StaleResponses,
+		P99LatencyMs:       float32(server.times[len(server.times)-result-1]) * 1e-6}, status.Error(codes.OK, "OK")
 }
 
 // type GetStatsResponse struct {
@@ -158,6 +170,7 @@ func (server *VideoRecServiceServer) GetTopVideos(ctx context.Context, req *pb.G
 		// fmt.Println(end)
 		server.mu.Lock()
 		server.ActiveRequests -= 1
+		server.times = append(server.times, float64(end))
 		server.AverageLatencyMs = (server.AverageLatencyMs*float32(server.TotalRequests) + float32(end)) / float32(server.TotalRequests+1)
 		server.TotalRequests += 1
 		server.mu.Unlock()

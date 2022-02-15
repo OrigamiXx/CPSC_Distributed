@@ -21,7 +21,135 @@ In addition to those, GetUser() may have its own checks that still throw errors 
 found, or Unimplemented or the service is unfinished.
 
 A4
-I believe if you do so in only one call, it will be fine.
+I believe if you do so in only one call, it will be fine. If you manage of save a local copy of the userclient after using user_conn to establish connection, you can reassign
+the user_conn variable to a connection to a video service, though you cannot make anymore userclients anymore.
 
 However, in concurrent situations this will definitely cause issues, since there are many threads at different stages of the call thus using the conn variable for different
 purposes. It will likely fail after a certain amount of concurrent calls and yield a large amount of failed calls.
+
+A6
+2022/02/15 05:23:35 This user has name Parker9611, their email is faekessler@lang.biz, and their profile URL is https://user-service.localhost/profile/200172
+2022/02/15 05:23:35 Recommended videos:
+2022/02/15 05:23:35   [0] Video id=1331, title="Perucluster: program", author=Viva Howell, url=https://video-data.localhost/blob/1331
+2022/02/15 05:23:35   [1] Video id=1183, title="Importanceshall: input", author=Brando Osinski, url=https://video-data.localhost/blob/1183
+2022/02/15 05:23:35   [2] Video id=1272, title="purple Horseradish", author=Heidi Jacobi, url=https://video-data.localhost/blob/1272
+2022/02/15 05:23:35   [3] Video id=1111, title="The elated goldfish's speed", author=Autumn Waelchi, url=https://video-data.localhost/blob/1111
+2022/02/15 05:23:35   [4] Video id=1345, title="Mobthink: transmit", author=Constantin Casper, url=https://video-data.localhost/blob/1345
+2022/02/15 05:23:35 
+
+2022/02/15 05:23:35 Test case 1: UserId=204054
+2022/02/15 05:23:35 Recommended videos:
+2022/02/15 05:23:35   [0] Video id=1085, title="Impalaclose: index", author=Blanche Little, url=https://video-data.localhost/blob/1085
+2022/02/15 05:23:35   [1] Video id=1047, title="tender towards", author=Renee Blick, url=https://video-data.localhost/blob/1047
+2022/02/15 05:23:35   [2] Video id=1106, title="fancy on", author=Will Ullrich, url=https://video-data.localhost/blob/1106
+2022/02/15 05:23:35   [3] Video id=1211, title="Sunshineshould: input", author=Stevie Wyman, url=https://video-data.localhost/blob/1211
+2022/02/15 05:23:35   [4] Video id=1314, title="evil elsewhere", author=Darrel Zemlak, url=https://video-data.localhost/blob/1314
+2022/02/15 05:23:35 Test case 2: UserId=203584
+2022/02/15 05:23:36 Recommended videos:
+2022/02/15 05:23:36   [0] Video id=1015, title="Officebow: hack", author=Eliane Simonis, url=https://video-data.localhost/blob/1015
+2022/02/15 05:23:36   [1] Video id=1380, title="splendid Lettuce", author=Belle Harber, url=https://video-data.localhost/blob/1380
+2022/02/15 05:23:36   [2] Video id=1268, title="successful down", author=Melyssa Borer, url=https://video-data.localhost/blob/1268
+2022/02/15 05:23:36   [3] Video id=1040, title="MediumTurquoisecloud: calculate", author=Fanny Botsford, url=https://video-data.localhost/blob/1040
+2022/02/15 05:23:36   [4] Video id=1344, title="charming towards", author=Orlo Feil, url=https://video-data.localhost/blob/1344
+2022/02/15 05:23:36 OK: basic tests passed!
+
+
+A8
+If you are determined to send them concurrently, you can do so but must use a lock to protect each go routine every carefully, using different locks to speed up the process.
+There will be hundreds of calls to GetTopVideos, and if each call also spawns quite a few go routines(concurrency over concurrency), there are super high chances of race conditioning. Incorrect index caused by race conditon
+may also lead to sigmentation faults.
+There is definitely room for imporvement, but it will be hard to debug and have massive overhead. We also have to consider if the server allows us to send that many requests.
+
+However I have chosen to send it sequentially because it's easier to manage, but actually already have quite some caveats when sending the requests sequentially. Handling errors incorrectly
+for one of the batch request will case the rest of requests to fail.
+
+B2
+Failrate = 10 on video service
+Batchsize = 10 on all three services.
+now_us  total_requests  total_errors    active_requests user_service_errors     video_service_errors    average_latency_ms      p99_latency_ms  stale_responses
+1644924692429198        0       0       0       0       0       0.00    0.00    0
+1644924693430901        0       0       0       0       0       0.00    0.00    0
+1644924694430685        0       0       0       0       0       0.00    0.00    0
+1644924695431887        15      6       2       0       6       225.04  511.16  6
+1644924696432887        25      7       2       0       7       217.89  511.16  7
+1644924697429756        33      7       4       0       7       232.47  511.16  7
+1644924698431094        44      8       3       0       8       263.30  511.16  8
+1644924699432891        55      11      2       0       11      274.65  511.16  11
+1644924700429705        63      12      4       0       12      278.09  511.16  12
+1644924701430233        76      15      1       0       15      283.89  511.16  15
+1644924702429543        84      16      3       0       16      285.18  511.16  16
+1644924703431581        93      16      4       0       16      301.20  511.16  16
+1644924704430691        104     20      3       0       20      297.04  505.27  20
+1644924705430127        116     23      1       0       23      300.42  505.27  23
+1644924706429619        125     26      2       0       26      292.81  505.27  26
+1644924707431353        134     28      3       0       28      294.98  505.27  28
+1644924708430446        143     28      4       0       28      301.03  505.27  28
+1644924709429931        155     32      2       0       32      300.03  505.27  32
+1644924710429500        164     35      3       0       35      300.08  505.27  35
+1644924711429550        177     39      0       0       39      293.20  505.27  39
+1644924712431950        185     42      2       0       42      288.37  505.27  42
+1644924713429741        195     44      2       0       44      287.19  505.27  44
+1644924714430121        205     48      2       0       48      280.59  496.49  48
+1644924715432188        215     53      2       0       53      277.30  496.49  53
+1644924716431755        224     54      3       0       54      282.48  507.21  54
+1644924717432280        234     56      3       0       56      280.18  507.21  56
+1644924718431416        244     57      3       0       57      283.01  507.21  57
+1644924719431500        256     61      1       0       61      281.67  507.21  61
+1644924720431646        264     63      3       0       63      282.14  507.21  63
+1644924721430919        273     64      4       0       64      284.66  507.21  64
+1644924722430222        285     66      2       0       66      286.47  507.21  66
+1644924723430063        295     68      2       0       68      284.40  507.21  68
+1644924724430504        304     71      3       0       71      284.04  505.27  71
+1644924725431914        313     72      4       0       72      286.45  505.27  72
+1644924726434543        324     74      3       0       74      289.25  505.27  74
+1644924727431079        335     77      2       0       77      288.44  505.27  77
+1644924728434553        344     80      3       0       80      286.72  505.27  80
+1644924729433839        353     82      4       0       82      286.88  505.27  82
+1644924730431851        364     84      3       0       84      289.81  505.27  84
+1644924731433479        377     88      0       0       88      289.18  505.27  88
+1644924732433318        385     91      2       0       91      288.02  505.27  91
+1644924733434450        396     93      1       0       93      285.47  505.27  93
+1644924734429834        405     94      2       0       94      284.16  500.59  94
+1644924735430511        413     97      4       0       97      281.78  500.59  97
+1644924736429759        424     99      3       0       99      284.04  500.59  99
+1644924737431628        434     103     3       0       103     283.48  500.59  103
+1644924738431595        444     105     3       0       105     284.74  500.59  105
+1644924739432228        453     107     4       0       107     284.47  500.59  107
+1644924740430389        463     109     4       0       109     285.09  500.59  109
+1644924741430223        473     110     4       0       110     286.59  500.59  110
+
+ExtraCredit2
+We can achieve this by sending mutiple batches in the same request. 
+
+C1
+Retrying might be bad because in some cases it is just repeating useless efforts, such as bad internet. It consumes resource and makes the entire call takes longer time,
+especially with batched request since each batch is retried.
+
+However, in our test cases where the fail rate is entirely random, retrying is actually very helping as it effectively halves the error 
+rate(trying two times instead of one). I have seen the error rate halved in mutiple batch and failrate settings.
+
+C2
+I have implemented it as return both cached result and an error, as that is what we often see people do. Youtube will remind you that your login information is outdated, so will
+just give some general reccomendations.
+There really aren't that much tradeoffs, since the trending videos are cached as a server variable in VideoRecServiceServer struct on all calls, so it's just pulling data. There are no
+tradeoffs except for a few more if-else checks.
+
+C3
+Instead of only cacheing trending videos, we can actually cache personal reccomendations as well. This is not very hard to change, but basically what we are doing is making the
+GetTopVideos a proactively go routine that grabs reccomendation infos on a time basis. The tradeoff is of course more resources, both network and computational, are consumed as this might
+amount to more automatic calls to GetTopVideos then manually calling it. On the bright side, we will only be down in service if video service is down for a very long time.
+
+Another way to improve reliability is to increase batch size. Although this will be limited to how video service and user service are set. More batches lead to more requests, thus bigger batches
+improves overall reliability.
+
+C4
+Indeed making establishments cost a lot of time thus interferes with performance. First of all, repeatedly calling itself is a network consuming action, and secondly, each call to 
+GetTopVideos is essentially making their own copy of this connection when they can be using the same one.
+
+To imporve this, use only two Dial() across the entire call to GetTopVideos, one for user service and one for video service. On top of this, further improve performance by making the
+user client and video client as server variables defines in the VideoRecServiceServer struct, thus all calls can share a single client object thus saving much memory and network overhead.
+This yielded in a 150ms speed improvement for me. This however does limit the GetTopVideos to work for only one user, thus limiting designs that possibly would allow GetTopVideos to
+pull reccomendations for multiple users in one call. This is also dangerous as shared objects is usually not thread safe in concurreny routines thus need to be carefully protected with locks.
+
+Finally, this might not be good for load balancing as we are using one connection and a few requests for everything related to this GetTopVideos call. If we are in a high throughout environemnt
+where we might have thousands of reccomendations this does not allow us to balance the load on video service optimally.
