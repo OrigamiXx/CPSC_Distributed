@@ -231,7 +231,7 @@ func TestBatchSize(t *testing.T) {
 	}
 }
 
-func TestStales_Buggytest(t *testing.T) {
+func TestFail(t *testing.T) {
 	userclient := umc.MakeMockUserServiceClient(usl.UserServiceOptions{
 		Seed:                 42,
 		SleepNs:              0,
@@ -243,7 +243,46 @@ func TestStales_Buggytest(t *testing.T) {
 		Seed:                 42,
 		TtlSeconds:           0,
 		SleepNs:              0,
-		FailureRate:          50,
+		FailureRate:          1,
+		ResponseOmissionRate: 0,
+		MaxBatchSize:         10,
+	})
+	vid_rec_opt := sl.VideoRecServiceOptions{
+		UserServiceAddr:  "[::1]:8081",
+		VideoServiceAddr: "[::1]:8082",
+		MaxBatchSize:     10,
+		DisableRetry:     false,
+		DisableFallback:  false,
+	}
+	request := pb.GetTopVideosRequest{
+		UserId: 204054,
+		Limit:  5,
+	}
+
+	ctx := context.Background()
+
+	vid_rec := sl.MakeVideoRecServiceServerWithMocks(vid_rec_opt, userclient, videoclient)
+	for i := 0; i < 5; i++ {
+		_, err := vid_rec.GetTopVideos(ctx, &request) //when failrate is not 0 the returned value would give a seg fault... some mysterious race condition exists here
+		if err == nil {
+			t.Fatal("Should be failing")
+		}
+	}
+}
+
+func TestStales(t *testing.T) {
+	userclient := umc.MakeMockUserServiceClient(usl.UserServiceOptions{
+		Seed:                 42,
+		SleepNs:              0,
+		FailureRate:          0,
+		ResponseOmissionRate: 0,
+		MaxBatchSize:         10,
+	})
+	videoclient := vmc.MakeMockVideoServiceClient(vsl.VideoServiceOptions{
+		Seed:                 42,
+		TtlSeconds:           0,
+		SleepNs:              0,
+		FailureRate:          10,
 		ResponseOmissionRate: 0,
 		MaxBatchSize:         10,
 	})
@@ -264,12 +303,18 @@ func TestStales_Buggytest(t *testing.T) {
 	var stales int64
 
 	vid_rec := sl.MakeVideoRecServiceServerWithMocks(vid_rec_opt, userclient, videoclient)
+	for i := 0; i < 5; i++ {
+		vid_rec.GetTopVideos(ctx, &request)
+	}
+
+	// request2 := inj.SetInjectionConfigRequest{Config: &inj.InjectionConfig{SleepNs: 0, FailureRate: 1, ResponseOmissionRate: 0}}
+	// videoclient.SetInjectionConfig(ctx, &request2) // This test wont work
+
 	for i := 0; i < 15; i++ {
-		response, err := vid_rec.GetTopVideos(ctx, &request) //when failrate is not 0 the returned value would give a seg fault... some mysterious race condition exists here
+		res, err := vid_rec.GetTopVideos(ctx, &request)
 		if err != nil {
 			counter += 1
-		}
-		if response.StaleResponse {
+		} else if res.StaleResponse == true {
 			stales += 1
 		}
 	}
@@ -278,6 +323,6 @@ func TestStales_Buggytest(t *testing.T) {
 		t.Fatal("Should be failing some")
 	}
 	if stales == 0 {
-		t.Fatal("Should be giving some stale response")
+		t.Fatal("Should be giving some stales")
 	}
 }

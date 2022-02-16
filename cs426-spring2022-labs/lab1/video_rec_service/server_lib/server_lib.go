@@ -63,7 +63,8 @@ type VideoRecServiceServer struct {
 	obsolete        uint64
 	times           []float64
 	// ch                 chan []*vpb.VideoInfo
-	trendings []*vpb.VideoInfo
+	trendings      []*vpb.VideoInfo
+	trendingClient vpb.VideoServiceClient
 	// videoClient vpb.VideoServiceClient
 	// userClient  upb.UserServiceClient
 }
@@ -328,7 +329,7 @@ func (server *VideoRecServiceServer) GetTopVideos(ctx context.Context, req *pb.G
 					server.StaleResponses += 1
 					server.mu.Unlock()
 					// fmt.Println("Giving stale response")
-					return &out, status.Error(codes.Aborted, "Video Service Dial Failed, trending videos returned")
+					return &out, nil
 				}
 			}
 			return nil, status.Error(codes.Aborted, "Video Service Dial Failed")
@@ -420,6 +421,7 @@ func (server *VideoRecServiceServer) GetTopVideos(ctx context.Context, req *pb.G
 			server.TotalErrors += 1
 			server.mu.Unlock()
 			if e, ok := status.FromError(err6); ok {
+				// fmt.Printf("Error 31: %v", e)
 				err6 = status.Errorf(e.Code(), "Error at 31 video service call: %q.", e.Code())
 			} else {
 				err6 = status.Errorf(e.Code(), "Error at 31 video service call: %q.", e.Code())
@@ -435,7 +437,7 @@ func (server *VideoRecServiceServer) GetTopVideos(ctx context.Context, req *pb.G
 					server.StaleResponses += 1
 					server.mu.Unlock()
 					// fmt.Println("Giving stale response")
-					return &out, err6
+					return &out, nil
 				}
 			}
 			return nil, err6
@@ -474,7 +476,7 @@ func (server *VideoRecServiceServer) GetTopVideos(ctx context.Context, req *pb.G
 					server.StaleResponses += 1
 					server.mu.Unlock()
 					// fmt.Println("Giving stale response")
-					return &out, err7
+					return &out, nil
 				}
 			}
 			return nil, err7
