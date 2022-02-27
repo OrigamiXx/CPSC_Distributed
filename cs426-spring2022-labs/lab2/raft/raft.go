@@ -41,10 +41,6 @@ import (
 // CommandValid to true to indicate that the ApplyMsg contains a newly
 // committed log entry.
 //
-// in part 2D you'll want to send other kinds of messages (e.g.,
-// snapshots) on the applyCh, but set CommandValid to false for these
-// other uses.
-//
 type ApplyMsg struct {
 	CommandValid bool
 	Command      interface{}
@@ -224,18 +220,6 @@ type RequestVoteReply struct {
 	VoteGranted bool // 候选人赢得了此张选票时为真 2A
 }
 
-type InstallSnapshotArgs struct {
-	Term              int    //领导人的任期号
-	LeaderId          int    //领导人的 ID，以便于跟随者重定向请求
-	LastIncludedIndex int    //快照中包含的最后日志条目的索引值
-	LastIncludedTerm  int    //快照中包含的最后日志条目的任期号
-	Data              []byte //快照的原始字节
-}
-
-type InstallSnapshotReply struct {
-	Term int
-}
-
 //
 // example RequestVote RPC handler.
 //
@@ -409,11 +393,6 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 	return ok
 }
 
-func (rf *Raft) sendInstallSnapshot(server int, args *InstallSnapshotArgs, reply *InstallSnapshotReply) bool {
-	ok := rf.peers[server].Call("Raft.InstallSnapshot", args, reply)
-	return ok
-}
-
 //
 // the service using Raft (e.g. a k/v server) wants to start
 // agreement on the next command to be appended to Raft's log. if this
@@ -573,61 +552,20 @@ func (rf *Raft) BroadcastHeartbeat() {
 		if peer == rf.me {
 			continue
 		}
-		if rf.nextIndex[peer] <= rf.LastIncludedIndex {
-			args := &InstallSnapshotArgs{
-				Term:              rf.currentTerm,
-				LeaderId:          rf.me,
-				LastIncludedIndex: rf.LastIncludedIndex,
-				LastIncludedTerm:  rf.LastIncludedTerm,
-			}
-			reply := &InstallSnapshotReply{}
-			targetIndex := rf.LastIncludedIndex + 1
-			go rf.doSendInstallSnapshot(peer, args, reply, targetIndex)
-		} else {
-			args := &AppendEntriesArgs{
-				Term:         rf.currentTerm,
-				LeaderId:     rf.me,
-				PrevLogIndex: rf.nextIndex[peer] - 1,
-				PrevLogTerm:  rf.getTerm(rf.nextIndex[peer] - 1),
-				Entries:      rf.logs[rf.nextIndex[peer]-rf.getFirstIndex():],
-				LeaderCommit: rf.commitIndex,
-			}
-			reply := &AppendEntriesReply{
-				Term:    0,
-				Success: false,
-			}
-			targetIndex := rf.nextIndex[peer] + len(args.Entries)
-			go rf.doSendAppendEntries(peer, args, reply, targetIndex)
+		args := &AppendEntriesArgs{
+			Term:         rf.currentTerm,
+			LeaderId:     rf.me,
+			PrevLogIndex: rf.nextIndex[peer] - 1,
+			PrevLogTerm:  rf.getTerm(rf.nextIndex[peer] - 1),
+			Entries:      rf.logs[rf.nextIndex[peer]-rf.getFirstIndex():],
+			LeaderCommit: rf.commitIndex,
 		}
-	}
-}
-
-func (rf *Raft) doSendInstallSnapshot(peer int, args *InstallSnapshotArgs, reply *InstallSnapshotReply, targetIndex int) {
-	rf.mu.Lock()
-	if rf.state != LEADER || args.Term != rf.currentTerm {
-		rf.mu.Unlock()
-		return
-	}
-	rf.mu.Unlock()
-	if rf.sendInstallSnapshot(peer, args, reply) {
-		rf.mu.Lock()
-		if rf.state != LEADER || args.Term != rf.currentTerm {
-			rf.mu.Unlock()
-			return
+		reply := &AppendEntriesReply{
+			Term:    0,
+			Success: false,
 		}
-		if reply.Term > rf.currentTerm {
-			rf.state = FOLLOWER
-			rf.currentTerm, rf.votedFor = reply.Term, -1
-			rf.persist()
-			rf.electionTimer.Reset(GetElectionTimeout())
-			rf.mu.Unlock()
-			return
-		}
-		if rf.LastIncludedIndex+1 == targetIndex {
-			rf.nextIndex[peer] = targetIndex
-			rf.matchIndex[peer] = rf.nextIndex[peer] - 1
-		}
-		rf.mu.Unlock()
+		targetIndex := rf.nextIndex[peer] + len(args.Entries)
+		go rf.doSendAppendEntries(peer, args, reply, targetIndex)
 	}
 }
 
@@ -686,32 +624,20 @@ func (rf *Raft) handleAppendEntriesResponse(peer int, args *AppendEntriesArgs, r
 		} else {
 			rf.nextIndex[peer] = reply.XIndex
 		}
-		if rf.nextIndex[peer] <= rf.LastIncludedIndex {
-			argsT := &InstallSnapshotArgs{
-				Term:              rf.currentTerm,
-				LeaderId:          rf.me,
-				LastIncludedIndex: rf.LastIncludedIndex,
-				LastIncludedTerm:  rf.LastIncludedTerm,
-			}
-			replyT := &InstallSnapshotReply{}
-			targetIndexT := rf.LastIncludedIndex + 1
-			go rf.doSendInstallSnapshot(peer, argsT, replyT, targetIndexT)
-		} else {
-			argsT := &AppendEntriesArgs{
-				Term:         rf.currentTerm,
-				LeaderId:     rf.me,
-				PrevLogIndex: rf.nextIndex[peer] - 1,
-				PrevLogTerm:  rf.getTerm(rf.nextIndex[peer] - 1),
-				Entries:      rf.logs[rf.nextIndex[peer]-rf.getFirstIndex():],
-				LeaderCommit: rf.commitIndex,
-			}
-			replyT := &AppendEntriesReply{
-				Term:    0,
-				Success: false,
-			}
-			targetIndexT := rf.nextIndex[peer] + len(argsT.Entries)
-			go rf.doSendAppendEntries(peer, argsT, replyT, targetIndexT)
+		argsT := &AppendEntriesArgs{
+			Term:         rf.currentTerm,
+			LeaderId:     rf.me,
+			PrevLogIndex: rf.nextIndex[peer] - 1,
+			PrevLogTerm:  rf.getTerm(rf.nextIndex[peer] - 1),
+			Entries:      rf.logs[rf.nextIndex[peer]-rf.getFirstIndex():],
+			LeaderCommit: rf.commitIndex,
 		}
+		replyT := &AppendEntriesReply{
+			Term:    0,
+			Success: false,
+		}
+		targetIndexT := rf.nextIndex[peer] + len(argsT.Entries)
+		go rf.doSendAppendEntries(peer, argsT, replyT, targetIndexT)
 	}
 	rf.mu.Unlock()
 }
