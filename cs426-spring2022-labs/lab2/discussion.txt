@@ -14,4 +14,4 @@ majority vote.
 First of all, to let this happen, the first conincidence have to appear, that "unfortuntely coincidence caused 3 nodes(or more) to timeout their heartbeat timers roughly at the same time", at
 least they need to time out in quick succession before the request vote RPCs come in. This is not actually that common.
 
-But just to make sure the above is solved, we can tapple the problem by randomizing the election timer. Problem sovled.
+But just to make sure the above is solved, we can tapple the problem by randomizing the election timer. By doing this eventually some candidate can send out their request vote RPC before other candidates' election timeout. This vote will succeed because this request RPC will have higher term number than other candidates have currently. Problem sovled.
