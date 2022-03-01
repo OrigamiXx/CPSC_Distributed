@@ -104,9 +104,10 @@ func (rf *Raft) GetState() (int, bool) {
 	var isleader bool
 	// Your code here (2A).
 	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
 	term = rf.currentTerm
 	isleader = rf.state == LEADER
-	rf.mu.Unlock()
 	return term, isleader
 }
 
@@ -228,7 +229,6 @@ func (rf *Raft) RequestVote(request *RequestVoteArgs, response *RequestVoteReply
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	defer rf.persist()
-	///////////////////////////////////////////////////////////////////////
 	//fmt.Println(rf.printState() + ":getVoteFor:" + strconv.Itoa(request.CandidateId) + "    voteForTerm:" + strconv.Itoa(request.Term))
 
 	response.Term = rf.currentTerm
@@ -245,7 +245,6 @@ func (rf *Raft) RequestVote(request *RequestVoteArgs, response *RequestVoteReply
 
 	//投票
 	if (rf.votedFor == -1 || rf.votedFor == request.CandidateId) && rf.checkLogs(request) {
-		///////////////////////////////////////////////////////////////////////
 		//fmt.Println(rf.printState() + ":voteFor:" + strconv.Itoa(request.CandidateId) + "    voteForTerm:" + strconv.Itoa(request.Term))
 		rf.votedFor = request.CandidateId
 		rf.electionTimer.Reset(GetElectionTimeout())
@@ -426,7 +425,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		Index:   index,
 	}
 	rf.logs = append(rf.logs, entry)
-	fmt.Println(strconv.Itoa(rf.me) + ":getStart    index:" + strconv.Itoa(index))
+	// fmt.Println(strconv.Itoa(rf.me) + ":getStart    index:" + strconv.Itoa(index))
 	rf.persist()
 	rf.BroadcastHeartbeat()
 	rf.mu.Unlock()
@@ -471,7 +470,6 @@ func (rf *Raft) ticker() {
 				rf.votedFor = rf.me
 				rf.persist()
 				request := rf.GetRequestVoteArgs()
-				/////////////////////////////////////////////////////////////////////////////////////
 				//fmt.Println(strconv.Itoa(rf.me) + ":startElection    term:" + strconv.Itoa(rf.currentTerm))
 
 				rf.StartElection(request)
