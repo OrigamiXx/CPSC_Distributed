@@ -1,0 +1,13 @@
+ESTIMATE of time to complete assignment: 46 hours
+
+      Time     Time
+Date  Started  Spent Work completed
+----  -------  ----  --------------
+2/26  2:00pm  2:35  reading raft paper and doing some more research
+2/27  6:00pm  6:00  still reading and implementing part A until ticker seems to be working
+2/28  9:10pm  4:30  finished part A implementation and passed part A tests
+3/01  8:40pm  5:00  tests for part A and reading on part B, implemented until logs for append entries
+
+
+
+Thank god someone made this at https://raft.github.io/ which gives a much better picture.
