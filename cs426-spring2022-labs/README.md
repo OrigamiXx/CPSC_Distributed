@@ -1,7 +1,7 @@
-Repo for Yale CPSC426 Distributed Systems
+#Repo for Yale CPSC426 Distributed Systems
 
-Lab0 StringSet Golang Warmups
+##Lab0 StringSet Golang Warmups
 
-Lab1 RPC Video Recommendation Service
+##Lab1 RPC Video Recommendation Service
 
-Lab2 Raft Consensus Algorithm
+##Lab2 Raft Consensus Algorithm
