@@ -68,7 +68,7 @@ type Entry struct {
 type Raft struct {
 	mu        sync.Mutex          // Lock to protect shared access to this peer's state
 	peers     []*labrpc.ClientEnd // RPC end points of all peers
-	Persister *Persister          // Object to hold this peer's persisted state
+	persister *Persister          // Object to hold this peer's persisted state
 	me        int                 // this peer's index into peers[]
 	dead      int32               // set by Kill()
 
@@ -84,14 +84,11 @@ type Raft struct {
 
 	commitIndex int
 	lastApplied int
-	nextIndex   []int //需要给对应下标的raft发送的log下标
-	matchIndex  []int //已经给对应下标的raft发送的最后的log下标
+	nextIndex   []int
+	matchIndex  []int
 
 	electionTimer  *time.Timer
 	heartbeatTimer *time.Timer
-
-	LastIncludedIndex int
-	LastIncludedTerm  int
 
 	applyCond *sync.Cond
 }
@@ -130,10 +127,8 @@ func (rf *Raft) persist() {
 	e.Encode(rf.logs)
 	e.Encode(rf.currentTerm)
 	e.Encode(rf.votedFor)
-	e.Encode(rf.LastIncludedIndex)
-	e.Encode(rf.LastIncludedTerm)
 	data := w.Bytes()
-	rf.Persister.SaveRaftState(data)
+	rf.persister.SaveRaftState(data)
 }
 
 //
@@ -162,41 +157,43 @@ func (rf *Raft) readPersist(data []byte) {
 	var logs []Entry
 	var currentTerm int
 	var voteFor int
-	var lastIncludedIndex int
-	var lastIncludedTerm int
+
 	if d.Decode(&logs) != nil ||
 		d.Decode(&currentTerm) != nil ||
-		d.Decode(&voteFor) != nil ||
-		d.Decode(&lastIncludedIndex) != nil ||
-		d.Decode(&lastIncludedTerm) != nil {
-		fmt.Println("Decoder error ... ...")
+		d.Decode(&voteFor) != nil {
+		fmt.Println("Decoder error")
 	} else {
 		rf.logs = logs
 		rf.currentTerm = currentTerm
 		rf.votedFor = voteFor
-		rf.LastIncludedIndex = lastIncludedIndex
-		rf.LastIncludedTerm = lastIncludedTerm
 	}
 	rf.mu.Unlock()
 }
 
 //AppendEntries的参数
 type AppendEntriesArgs struct {
-	Term         int     //领导人任期
-	LeaderId     int     //领导人下标
-	PrevLogIndex int     //紧邻新日志条目之前的那个日志条目的索引
-	PrevLogTerm  int     //紧邻新日志条目之前的那个日志条目的任期
-	Entries      []Entry //需要被保存的日志条目（被当做心跳使用时，则日志条目内容为空；为了提高效率可能一次性发送多个）
-	LeaderCommit int     //领导人的已知已提交的最高的日志条目的索引
+	Term         int
+	LeaderId     int
+	PrevLogIndex int
+	PrevLogTerm  int
+	Entries      []Entry
+	LeaderCommit int
 }
 
 //AppendEntries的返回值
 type AppendEntriesReply struct {
-	Term    int  //当前任期，对于领导人而言，它会更新自己的任期
-	Success bool //如果跟随者所含有的条目和 prevLogIndex 以及 prevLogTerm 匹配上了，则为 true
-	XTerm   int  //这个是Follower中与Leader冲突的Log对应的任期号
-	XIndex  int  //这个是Follower中，对应任期号为XTerm的第一条Log条目的槽位号
-	XLen    int  //如果Follower在对应位置没有Log，那么XTerm会返回-1，XLen表示空白的Log槽位数
+	Term    int
+	Success bool
+	XTerm   int //term in the conflicting entry (if any)
+	XIndex  int //index of first entry with that term (if any)
+	XLen    int //if the follower has no log at corresponding, log length
+
+	// 	 Case 1 (leader doesn't have XTerm):
+	//     nextIndex = XIndex
+	//   Case 2 (leader has XTerm):
+	//     nextIndex = leader's last entry for XTerm
+	//   Case 3 (follower's log is too short):
+	//     nextIndex = XLen
 }
 
 //
@@ -205,10 +202,10 @@ type AppendEntriesReply struct {
 //
 type RequestVoteArgs struct {
 	// Your data here (2A, 2B).
-	Term         int //候选人的任期号 2A
-	CandidateId  int // 请求选票的候选人ID 2A
-	LastLogIndex int // 候选人的最后日志条目的索引值 2A
-	LastLogTerm  int // 候选人的最后日志条目的任期号 2A
+	Term         int
+	CandidateId  int
+	LastLogIndex int
+	LastLogTerm  int
 }
 
 //
@@ -217,8 +214,8 @@ type RequestVoteArgs struct {
 //
 type RequestVoteReply struct {
 	// Your data here (2A).
-	Term        int  // 当前任期号,便于返回后更新自己的任期号 2A
-	VoteGranted bool // 候选人赢得了此张选票时为真 2A
+	Term        int
+	VoteGranted bool
 }
 
 //
@@ -237,17 +234,14 @@ func (rf *Raft) RequestVote(request *RequestVoteArgs, response *RequestVoteReply
 		rf.currentTerm, rf.votedFor = request.Term, -1
 	}
 
-	//如果候选人任期小于自己的任期
 	if request.Term < rf.currentTerm {
 		response.VoteGranted = false
 		return
 	}
 
-	//投票
 	if (rf.votedFor == -1 || rf.votedFor == request.CandidateId) && rf.checkLogs(request) {
-		//fmt.Println(rf.printState() + ":voteFor:" + strconv.Itoa(request.CandidateId) + "    voteForTerm:" + strconv.Itoa(request.Term))
 		rf.votedFor = request.CandidateId
-		rf.electionTimer.Reset(GetElectionTimeout())
+		rf.electionTimer.Reset(electionTimeout())
 		response.VoteGranted = true
 	}
 }
@@ -266,17 +260,17 @@ func (rf *Raft) AppendEntries(request *AppendEntriesArgs, response *AppendEntrie
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	defer rf.persist()
-	defer func() {
-		log := rf.printState() + "Success="
-		if response.Success {
-			log += "true"
-		} else {
-			log += "false"
-		}
-		log += "    XTerm=" + strconv.Itoa(response.XTerm) + "    XIndex=" + strconv.Itoa(response.XIndex) + "    XLen=" + strconv.Itoa(response.XLen)
-		// fmt.Println(log)
-	}()
-	// fmt.Println(rf.printState() + ":get an entry from:" + strconv.Itoa(request.LeaderId) + "    prevLogIndex:" + strconv.Itoa(request.PrevLogIndex) + "    logsLen:" + strconv.Itoa(len(request.Entries)))
+	// defer func() {
+	// 	log := rf.printState() + "Success="
+	// 	if response.Success {
+	// 		log += "true"
+	// 	} else {
+	// 		log += "false"
+	// 	}
+	// 	log += "    XTerm=" + strconv.Itoa(response.XTerm) + "    XIndex=" + strconv.Itoa(response.XIndex) + "    XLen=" + strconv.Itoa(response.XLen)
+	// 	fmt.Println(log)
+	// }()
+
 	if request.Term < rf.currentTerm {
 		response.Term, response.Success = rf.currentTerm, false
 		return
@@ -286,12 +280,10 @@ func (rf *Raft) AppendEntries(request *AppendEntriesArgs, response *AppendEntrie
 	}
 
 	rf.state = FOLLOWER
-	rf.electionTimer.Reset(GetElectionTimeout())
+	rf.electionTimer.Reset(electionTimeout())
 
-	if request.PrevLogIndex < rf.getFirstIndex()-1 || request.PrevLogIndex < rf.LastIncludedIndex {
+	if request.PrevLogIndex < rf.getFirstIndex()-1 {
 		response.Term, response.Success = 0, false
-		response.XIndex = rf.LastIncludedIndex + 1
-		//fmt.Println(rf.printState()+"returnForIndexSmall")
 		return
 	}
 
@@ -305,14 +297,14 @@ func (rf *Raft) AppendEntries(request *AppendEntriesArgs, response *AppendEntrie
 	if rf.getTerm(request.PrevLogIndex) != request.PrevLogTerm {
 		response.Term, response.Success = rf.currentTerm, false
 		response.XTerm = rf.logs[request.PrevLogIndex-rf.getFirstIndex()].Term
-		response.XIndex = rf.binaryFindFirstIndexByTerm(response.XTerm)
+		response.XIndex = rf.firstIndexByTerm(response.XTerm)
 		//fmt.Println(rf.printState()+"returnForLogCheck")
 		return
 	}
 	for index, entry := range request.Entries {
 		if entry.Index-rf.getFirstIndex() >= len(rf.logs) || rf.logs[entry.Index-rf.getFirstIndex()].Term != entry.Term {
 			logs := append([]Entry{}, append(rf.logs[:entry.Index-rf.getFirstIndex()], request.Entries[index:]...)...)
-			rf.logs = logs
+			rf.logs = logs // delete conflicting logs
 			break
 		}
 	}
@@ -324,32 +316,26 @@ func (rf *Raft) AppendEntries(request *AppendEntriesArgs, response *AppendEntrie
 		}
 		rf.applyCond.Signal()
 	}
-	//rf.applyLogs()
-	/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	//fmt.Println(rf.printState() + ":receiveEntries    from:" + strconv.Itoa(request.LeaderId) + "  fromTerm:" + strconv.Itoa(request.Term))
 	response.Term, response.Success = rf.currentTerm, true
 }
 
-func (rf *Raft) binaryFindFirstIndexByTerm(term int) int {
+func (rf *Raft) firstIndexByTerm(term int) int {
 	left := 1
 	right := len(rf.logs) - 1
 	for left <= right {
 		mid := left + (right-left)/2
 		if rf.logs[mid].Term < term {
 			left = mid + 1
-		} else if rf.logs[mid].Term > term {
-			right = mid - 1
 		} else {
-			//为了寻找左边界,这里仍然将移动右指针
 			right = mid - 1
 		}
 	}
-	//检查越界和没有找到的情况
+
 	if left >= len(rf.logs) || rf.logs[left].Term != term {
-		fmt.Println("[RETURN -1] term=" + strconv.Itoa(term) + "    " + rf.printState())
 		return -1
 	}
-	//fmt.Println(strconv.Itoa(rf.me) + ":return left:" + strconv.Itoa(rf.logs[left].Index) + "-----------------------")
+
 	return rf.logs[left].Index
 }
 
@@ -425,7 +411,6 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		Index:   index,
 	}
 	rf.logs = append(rf.logs, entry)
-	// fmt.Println(strconv.Itoa(rf.me) + ":getStart    index:" + strconv.Itoa(index))
 	rf.persist()
 	rf.BroadcastHeartbeat()
 	rf.mu.Unlock()
@@ -460,7 +445,7 @@ func (rf *Raft) ticker() {
 	// Your code here to check if a leader election should
 	// be started and to randomize sleeping time using
 	// time.Sleep().
-	for rf.killed() == false {
+	for !rf.killed() {
 		select {
 		case <-rf.electionTimer.C:
 			rf.mu.Lock()
@@ -473,13 +458,13 @@ func (rf *Raft) ticker() {
 				//fmt.Println(strconv.Itoa(rf.me) + ":startElection    term:" + strconv.Itoa(rf.currentTerm))
 
 				rf.StartElection(request)
-				rf.electionTimer.Reset(GetElectionTimeout())
+				rf.electionTimer.Reset(electionTimeout())
 			}
 			rf.mu.Unlock()
 		case <-rf.heartbeatTimer.C:
 			rf.mu.Lock()
 			if rf.state == LEADER {
-				rf.heartbeatTimer.Reset(GetHeartbeatTimeout())
+				rf.heartbeatTimer.Reset(heartbeatTimeout())
 				rf.BroadcastHeartbeat()
 			}
 			rf.mu.Unlock()
@@ -489,17 +474,16 @@ func (rf *Raft) ticker() {
 
 func (rf *Raft) StartElection(request *RequestVoteArgs) {
 	grantedVotes := 1
-	lock := sync.Mutex{} //保护 grantedVotes
+	lock := sync.Mutex{}
 	for peer := range rf.peers {
 		if peer == rf.me {
 			continue
 		}
-		go rf.doSendRequestVote(peer, request, &grantedVotes, &lock)
+		go rf.sendRequestVoteRoutine(peer, request, &grantedVotes, &lock)
 	}
 
 }
 
-//返回一个投票请求参数
 func (rf *Raft) GetRequestVoteArgs() *RequestVoteArgs {
 	args := &RequestVoteArgs{
 		Term:         rf.currentTerm,
@@ -510,7 +494,7 @@ func (rf *Raft) GetRequestVoteArgs() *RequestVoteArgs {
 	return args
 }
 
-func (rf *Raft) doSendRequestVote(peer int, request *RequestVoteArgs, grantedVotes *int, lock *sync.Mutex) {
+func (rf *Raft) sendRequestVoteRoutine(peer int, request *RequestVoteArgs, grantedVotes *int, lock *sync.Mutex) {
 	response := &RequestVoteReply{
 		Term:        0,
 		VoteGranted: false,
@@ -518,27 +502,25 @@ func (rf *Raft) doSendRequestVote(peer int, request *RequestVoteArgs, grantedVot
 	if rf.sendRequestVote(peer, request, response) {
 		rf.mu.Lock()
 		if rf.currentTerm == request.Term && rf.state == CANDIDATE {
-			//////////////////////////////////////////////////////////////////////////////////
 			//fmt.Println(rf.printState() + ":sendRequestVoteTO:" + strconv.Itoa(peer) + "    term:" + strconv.Itoa(request.Term))
 			if response.VoteGranted {
 				lock.Lock()
 				*grantedVotes += 1
 				if *grantedVotes > len(rf.peers)/2 {
-					////////////////////////////////////////////////////////////////////////////////
 					//fmt.Println(rf.printState() + ":electionOK    term:" + strconv.Itoa(rf.currentTerm))
 					for i := 0; i < len(rf.nextIndex); i++ {
 						rf.nextIndex[i] = rf.commitIndex + 1
 					}
 					rf.BroadcastHeartbeat()
 					rf.state = LEADER
-					rf.heartbeatTimer.Reset(GetHeartbeatTimeout())
+					rf.heartbeatTimer.Reset(heartbeatTimeout())
 				}
 				lock.Unlock()
 			} else if response.Term > rf.currentTerm {
 				rf.state = FOLLOWER
 				rf.currentTerm, rf.votedFor = response.Term, -1
 				rf.persist()
-				rf.electionTimer.Reset(GetElectionTimeout())
+				rf.electionTimer.Reset(electionTimeout())
 			}
 		}
 		rf.mu.Unlock()
@@ -563,11 +545,11 @@ func (rf *Raft) BroadcastHeartbeat() {
 			Success: false,
 		}
 		targetIndex := rf.nextIndex[peer] + len(args.Entries)
-		go rf.doSendAppendEntries(peer, args, reply, targetIndex)
+		go rf.sendAppendEntriesRoutine(peer, args, reply, targetIndex)
 	}
 }
 
-func (rf *Raft) doSendAppendEntries(peer int, args *AppendEntriesArgs, reply *AppendEntriesReply, targetIndex int) {
+func (rf *Raft) sendAppendEntriesRoutine(peer int, args *AppendEntriesArgs, reply *AppendEntriesReply, targetIndex int) {
 	rf.mu.Lock()
 	if rf.state != LEADER || args.Term != rf.currentTerm {
 		rf.mu.Unlock()
@@ -585,13 +567,12 @@ func (rf *Raft) handleAppendEntriesResponse(peer int, args *AppendEntriesArgs, r
 		rf.mu.Unlock()
 		return
 	}
-	///////////////////////////////////////////////////////////////////////////
 	//fmt.Println(rf.printState() + ":doSendAppend to:" + strconv.Itoa(peer) + "    argsEntriesLen=" + strconv.Itoa(len(args.Entries)))
 	if reply.Term > rf.currentTerm {
 		rf.state = FOLLOWER
 		rf.currentTerm, rf.votedFor = reply.Term, -1
 		rf.persist()
-		rf.electionTimer.Reset(GetElectionTimeout())
+		rf.electionTimer.Reset(electionTimeout())
 		rf.mu.Unlock()
 		return
 	}
@@ -605,7 +586,7 @@ func (rf *Raft) handleAppendEntriesResponse(peer int, args *AppendEntriesArgs, r
 			if i == rf.me {
 				continue
 			}
-			// 和其他服务器比较matchIndex 当到大多数的时候就可以提交这个值
+			// commit when quorum
 			if rf.matchIndex[i] >= rf.matchIndex[peer] {
 				commitCount++
 			}
@@ -613,7 +594,7 @@ func (rf *Raft) handleAppendEntriesResponse(peer int, args *AppendEntriesArgs, r
 
 		if commitCount >= len(rf.peers)/2+1 && rf.commitIndex < rf.matchIndex[peer] && rf.logs[rf.matchIndex[peer]-rf.getFirstIndex()].Term == rf.currentTerm {
 			rf.commitIndex = rf.matchIndex[peer]
-			//大多数节点已经提交（复制）log，可以将log应用到commitIndex位置
+			// majority commited, signal CV
 			rf.applyCond.Signal()
 		}
 	} else {
@@ -635,13 +616,13 @@ func (rf *Raft) handleAppendEntriesResponse(peer int, args *AppendEntriesArgs, r
 			Success: false,
 		}
 		targetIndexT := rf.nextIndex[peer] + len(argsT.Entries)
-		go rf.doSendAppendEntries(peer, argsT, replyT, targetIndexT)
+		go rf.sendAppendEntriesRoutine(peer, argsT, replyT, targetIndexT)
 	}
 	rf.mu.Unlock()
 }
 
 func (rf *Raft) applyLogs() {
-	for rf.killed() == false {
+	for !rf.killed() {
 		rf.mu.Lock()
 		if rf.lastApplied >= rf.commitIndex {
 			rf.applyCond.Wait()
@@ -681,12 +662,11 @@ func (rf *Raft) applyLogs() {
 // Make() must return quickly, so it should start goroutines
 // for any long-running work.
 //
-func Make(peers []*labrpc.ClientEnd, me int,
-	persister *Persister, applyCh chan ApplyMsg) *Raft {
+func Make(peers []*labrpc.ClientEnd, me int, persister *Persister, applyCh chan ApplyMsg) *Raft {
 	//fmt.Println("[Make a raft]... ...")
 	rf := &Raft{
 		peers:          peers,
-		Persister:      persister,
+		persister:      persister,
 		me:             me,
 		dead:           0,
 		applyCh:        applyCh,
@@ -696,8 +676,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 		logs:           make([]Entry, 1),
 		nextIndex:      make([]int, len(peers)),
 		matchIndex:     make([]int, len(peers)),
-		heartbeatTimer: time.NewTimer(GetHeartbeatTimeout()),
-		electionTimer:  time.NewTimer(GetElectionTimeout()),
+		heartbeatTimer: time.NewTimer(heartbeatTimeout()),
+		electionTimer:  time.NewTimer(electionTimeout()),
 		commitIndex:    0,
 		lastApplied:    0,
 	}
@@ -709,25 +689,23 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
-	rf.lastApplied = rf.LastIncludedIndex
-	rf.commitIndex = rf.LastIncludedIndex
 	// start ticker goroutine to start elections
 	go rf.ticker()
 	go rf.applyLogs()
 	return rf
 }
 
-func GetElectionTimeout() time.Duration {
+func electionTimeout() time.Duration {
 	rand.Seed(time.Now().UnixNano())
 	return time.Millisecond * time.Duration(1000+rand.Intn(1000))
 }
 
-func GetHeartbeatTimeout() time.Duration {
+func heartbeatTimeout() time.Duration {
 	return time.Millisecond * 100
 }
 
 func (rf *Raft) printState() string {
-	state := strconv.Itoa(rf.me) + ":    logsLen=" + strconv.Itoa(len(rf.logs)) + "    term=" + strconv.Itoa(rf.currentTerm) + "    state=" + strconv.Itoa(int(rf.state))
+	state := strconv.Itoa(rf.me) + ",    logsLen=" + strconv.Itoa(len(rf.logs)) + "    term=" + strconv.Itoa(rf.currentTerm) + "    state=" + strconv.Itoa(int(rf.state))
 	state += "    lastLogTerm=" + strconv.Itoa(rf.getLastTerm())
 	state += "    lastLogIndex=" + strconv.Itoa(rf.getLastIndex())
 	for peer := range rf.peers {
@@ -736,40 +714,21 @@ func (rf *Raft) printState() string {
 		}
 		state = state + "   " + strconv.Itoa(peer) + ":" + strconv.Itoa(rf.nextIndex[peer])
 	}
-	state += "    LastIncludedIndex=" + strconv.Itoa(rf.LastIncludedIndex) + "    "
 	return state
 }
 
 func (rf *Raft) getLastTerm() int {
-	if len(rf.logs) > 0 {
-		return rf.logs[len(rf.logs)-1].Term
-	} else {
-		return rf.LastIncludedTerm
-	}
+	return rf.logs[len(rf.logs)-1].Term
 }
 
 func (rf *Raft) getLastIndex() int {
-	if len(rf.logs) > 0 {
-		return rf.logs[len(rf.logs)-1].Index
-	} else {
-		return rf.LastIncludedIndex
-	}
+	return rf.logs[len(rf.logs)-1].Index
 }
 
 func (rf *Raft) getFirstIndex() int {
-	if len(rf.logs) > 0 {
-		return rf.logs[0].Index
-	}
-	return rf.LastIncludedIndex + 1
+	return rf.logs[0].Index
 }
 
 func (rf *Raft) getTerm(index int) int {
-	if index > rf.LastIncludedIndex {
-		return rf.logs[index-rf.getFirstIndex()].Term
-	}
-	if index == rf.LastIncludedIndex {
-		return rf.LastIncludedTerm
-	}
-	fmt.Println(rf.printState() + "TERM ERROR -1")
-	return -1
+	return rf.logs[index-rf.getFirstIndex()].Term
 }

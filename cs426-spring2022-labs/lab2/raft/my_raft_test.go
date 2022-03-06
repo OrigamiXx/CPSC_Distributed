@@ -86,7 +86,7 @@ func TestElection2D(t *testing.T) {
 	cfg.end()
 }
 
-func TestAgreeLeaderFailAgree2E(t *testing.T) {
+func TestAgreeLeaderFailAgree2D(t *testing.T) {
 	servers := 7
 	cfg := make_config(t, servers, false, false)
 	defer cfg.cleanup()
@@ -123,7 +123,7 @@ func TestAgreeLeaderFailAgree2E(t *testing.T) {
 	cfg.end()
 }
 
-func TestAgreeLeaderFailNoAgree2E(t *testing.T) {
+func TestAgreeLeaderFailNoAgree2D(t *testing.T) {
 	servers := 7
 	cfg := make_config(t, servers, false, false)
 	defer cfg.cleanup()
@@ -181,7 +181,7 @@ func TestAgreeLeaderFailNoAgree2E(t *testing.T) {
 	cfg.end()
 }
 
-func TestNoBadLog2E(t *testing.T) {
+func TestNoBadLog2D(t *testing.T) {
 	servers := 7
 	cfg := make_config(t, servers, false, false)
 	defer cfg.cleanup()
@@ -253,7 +253,7 @@ func TestNoBadLog2E(t *testing.T) {
 	cfg.end()
 }
 
-func TestPersistHotCrashNotBreak2F(t *testing.T) {
+func TestPersistHotCrashNotBreak2D(t *testing.T) {
 	servers := 7
 	cfg := make_config(t, servers, false, false)
 	defer cfg.cleanup()
