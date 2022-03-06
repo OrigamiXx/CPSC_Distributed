@@ -1,4 +1,4 @@
-ESTIMATE of time to complete assignment: 46 hours
+ESTIMATE of time to complete assignment: 40 hours
 
       Time     Time
 Date  Started  Spent Work completed
@@ -7,7 +7,23 @@ Date  Started  Spent Work completed
 2/27  6:00pm  6:00  still reading and implementing part A until ticker seems to be working
 2/28  9:10pm  4:30  finished part A implementation and passed part A tests
 3/01  8:40pm  5:00  tests for part A and reading on part B, implemented until logs for append entries
+3/04  7:30pm  6:00  finish part B and started part c
+3/05  4:00pm  4:30  finished until encoder/decoder and read state seems fine
+3/06  6:00pm  5:00  finished part c and passed all tests, code working
+3/07  9:20pm  1:30  unit test for part c and some debugging, ready to submit
 
+Total ~37 hours
 
 
 Thank god someone made this at https://raft.github.io/ which gives a much better picture.
+Also consulted https://yunuskilicdev.medium.com/raft-consensus-algorithm-implementation-with-go-d0f9bf4472a0 for using Xterm, Xindex, Xlen in append entries to past the timeout test cases.
+
+Some major bugs
+Bug1: keep the election timer running and when it fires, always start a new election, and abandon previous elections. Also beware to restart the timer when a vote is granted.
+Bug2: many functions has to be locked, and it was honestly some trial and error programming, for example start, readpersist have to be locked...
+Bug3: the table mentioned "log entries to store (empty for heartbeat; may send more than one for efficiency)", turns out this is a must and 2C tests would time out without it. Faster appendentries
+is achieved using Xterm, Xindex, Xlen for fast log backtracking as shown by the blog I cited above.
+Bug4: to apply the logs it's very cumbersome to do with channels since i need the applylogs routine to sleep when it is not ready to apply. Use a conditional var instead.
+
+
+
