@@ -25,7 +25,6 @@ import (
 
 	"6.824/labgob"
 
-	//	"bytes"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -91,6 +90,33 @@ type Raft struct {
 	heartbeatTimer *time.Timer
 
 	applyCond *sync.Cond
+}
+
+func (rf *Raft) logVars() string {
+	state := strconv.Itoa(rf.me) + ", log length=" + strconv.Itoa(len(rf.logs)) + ", term=" + strconv.Itoa(rf.currentTerm) + ", state=" + strconv.Itoa(int(rf.state))
+	for peer := range rf.peers {
+		if peer == rf.me {
+			continue
+		}
+		state = state + " " + strconv.Itoa(peer) + ": " + strconv.Itoa(rf.nextIndex[peer])
+	}
+	return state
+}
+
+func (rf *Raft) getLastTerm() int {
+	return rf.logs[len(rf.logs)-1].Term
+}
+
+func (rf *Raft) getLastIndex() int {
+	return rf.logs[len(rf.logs)-1].Index
+}
+
+func (rf *Raft) getFirstIndex() int {
+	return rf.logs[0].Index
+}
+
+func (rf *Raft) getTerm(index int) int {
+	return rf.logs[index-rf.getFirstIndex()].Term
 }
 
 // return currentTerm and whether this server
@@ -170,7 +196,6 @@ func (rf *Raft) readPersist(data []byte) {
 	rf.mu.Unlock()
 }
 
-//AppendEntries的参数
 type AppendEntriesArgs struct {
 	Term         int
 	LeaderId     int
@@ -180,7 +205,6 @@ type AppendEntriesArgs struct {
 	LeaderCommit int
 }
 
-//AppendEntries的返回值
 type AppendEntriesReply struct {
 	Term    int
 	Success bool
@@ -226,7 +250,7 @@ func (rf *Raft) RequestVote(request *RequestVoteArgs, response *RequestVoteReply
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	defer rf.persist()
-	//fmt.Println(rf.printState() + ":getVoteFor:" + strconv.Itoa(request.CandidateId) + "    voteForTerm:" + strconv.Itoa(request.Term))
+	//fmt.Println(rf.logVars() + " " + strconv.Itoa(request.CandidateId) + " " + strconv.Itoa(request.Term))
 
 	response.Term = rf.currentTerm
 	if request.Term > rf.currentTerm {
@@ -261,13 +285,8 @@ func (rf *Raft) AppendEntries(request *AppendEntriesArgs, response *AppendEntrie
 	defer rf.mu.Unlock()
 	defer rf.persist()
 	// defer func() {
-	// 	log := rf.printState() + "Success="
-	// 	if response.Success {
-	// 		log += "true"
-	// 	} else {
-	// 		log += "false"
-	// 	}
-	// 	log += "    XTerm=" + strconv.Itoa(response.XTerm) + "    XIndex=" + strconv.Itoa(response.XIndex) + "    XLen=" + strconv.Itoa(response.XLen)
+	// 	log := rf.logVars()
+	// 	log += " XTerm=" + strconv.Itoa(response.XTerm) + " XIndex=" + strconv.Itoa(response.XIndex) + " XLen=" + strconv.Itoa(response.XLen)
 	// 	fmt.Println(log)
 	// }()
 
@@ -291,14 +310,14 @@ func (rf *Raft) AppendEntries(request *AppendEntriesArgs, response *AppendEntrie
 		response.Term, response.Success = rf.currentTerm, false
 		response.XTerm = -1
 		response.XLen = rf.getLastIndex() + 1
-		//fmt.Println(rf.printState()+"returnForIndexBig")
+		//fmt.Println(rf.logVars()+"check 1")
 		return
 	}
 	if rf.getTerm(request.PrevLogIndex) != request.PrevLogTerm {
 		response.Term, response.Success = rf.currentTerm, false
 		response.XTerm = rf.logs[request.PrevLogIndex-rf.getFirstIndex()].Term
 		response.XIndex = rf.firstIndexByTerm(response.XTerm)
-		//fmt.Println(rf.printState()+"returnForLogCheck")
+		//fmt.Println(rf.logVars()+"check 2")
 		return
 	}
 	for index, entry := range request.Entries {
@@ -316,7 +335,7 @@ func (rf *Raft) AppendEntries(request *AppendEntriesArgs, response *AppendEntrie
 		}
 		rf.applyCond.Signal()
 	}
-	//fmt.Println(rf.printState() + ":receiveEntries    from:" + strconv.Itoa(request.LeaderId) + "  fromTerm:" + strconv.Itoa(request.Term))
+	//fmt.Println(rf.logVars() + ":receiveEntries from:" + strconv.Itoa(request.LeaderId) + " fromTerm:" + strconv.Itoa(request.Term))
 	response.Term, response.Success = rf.currentTerm, true
 }
 
@@ -502,12 +521,11 @@ func (rf *Raft) sendRequestVoteRoutine(peer int, request *RequestVoteArgs, grant
 	if rf.sendRequestVote(peer, request, response) {
 		rf.mu.Lock()
 		if rf.currentTerm == request.Term && rf.state == CANDIDATE {
-			//fmt.Println(rf.printState() + ":sendRequestVoteTO:" + strconv.Itoa(peer) + "    term:" + strconv.Itoa(request.Term))
 			if response.VoteGranted {
 				lock.Lock()
 				*grantedVotes += 1
 				if *grantedVotes > len(rf.peers)/2 {
-					//fmt.Println(rf.printState() + ":electionOK    term:" + strconv.Itoa(rf.currentTerm))
+					//fmt.Println(rf.logVars() + ":elected term:" + strconv.Itoa(rf.currentTerm))
 					for i := 0; i < len(rf.nextIndex); i++ {
 						rf.nextIndex[i] = rf.commitIndex + 1
 					}
@@ -567,7 +585,6 @@ func (rf *Raft) handleAppendEntriesResponse(peer int, args *AppendEntriesArgs, r
 		rf.mu.Unlock()
 		return
 	}
-	//fmt.Println(rf.printState() + ":doSendAppend to:" + strconv.Itoa(peer) + "    argsEntriesLen=" + strconv.Itoa(len(args.Entries)))
 	if reply.Term > rf.currentTerm {
 		rf.state = FOLLOWER
 		rf.currentTerm, rf.votedFor = reply.Term, -1
@@ -603,7 +620,7 @@ func (rf *Raft) handleAppendEntriesResponse(peer int, args *AppendEntriesArgs, r
 		} else {
 			rf.nextIndex[peer] = reply.XIndex
 		}
-		argsT := &AppendEntriesArgs{
+		args_ := &AppendEntriesArgs{
 			Term:         rf.currentTerm,
 			LeaderId:     rf.me,
 			PrevLogIndex: rf.nextIndex[peer] - 1,
@@ -611,12 +628,12 @@ func (rf *Raft) handleAppendEntriesResponse(peer int, args *AppendEntriesArgs, r
 			Entries:      rf.logs[rf.nextIndex[peer]-rf.getFirstIndex():],
 			LeaderCommit: rf.commitIndex,
 		}
-		replyT := &AppendEntriesReply{
+		reply_ := &AppendEntriesReply{
 			Term:    0,
 			Success: false,
 		}
-		targetIndexT := rf.nextIndex[peer] + len(argsT.Entries)
-		go rf.sendAppendEntriesRoutine(peer, argsT, replyT, targetIndexT)
+		targetIndex_ := rf.nextIndex[peer] + len(args_.Entries)
+		go rf.sendAppendEntriesRoutine(peer, args_, reply_, targetIndex_)
 	}
 	rf.mu.Unlock()
 }
@@ -642,7 +659,7 @@ func (rf *Raft) applyLogs() {
 				}
 			}
 			rf.mu.Lock()
-			//fmt.Println(rf.printState() + "lastApplied=" + strconv.Itoa(lastApplied))
+			//fmt.Println(rf.logVars() + "lastApplied=" + strconv.Itoa(lastApplied))
 			if rf.lastApplied < commitIndex {
 				rf.lastApplied = commitIndex
 			}
@@ -702,33 +719,4 @@ func electionTimeout() time.Duration {
 
 func heartbeatTimeout() time.Duration {
 	return time.Millisecond * 100
-}
-
-func (rf *Raft) printState() string {
-	state := strconv.Itoa(rf.me) + ",    logsLen=" + strconv.Itoa(len(rf.logs)) + "    term=" + strconv.Itoa(rf.currentTerm) + "    state=" + strconv.Itoa(int(rf.state))
-	state += "    lastLogTerm=" + strconv.Itoa(rf.getLastTerm())
-	state += "    lastLogIndex=" + strconv.Itoa(rf.getLastIndex())
-	for peer := range rf.peers {
-		if peer == rf.me {
-			continue
-		}
-		state = state + "   " + strconv.Itoa(peer) + ":" + strconv.Itoa(rf.nextIndex[peer])
-	}
-	return state
-}
-
-func (rf *Raft) getLastTerm() int {
-	return rf.logs[len(rf.logs)-1].Term
-}
-
-func (rf *Raft) getLastIndex() int {
-	return rf.logs[len(rf.logs)-1].Index
-}
-
-func (rf *Raft) getFirstIndex() int {
-	return rf.logs[0].Index
-}
-
-func (rf *Raft) getTerm(index int) int {
-	return rf.logs[index-rf.getFirstIndex()].Term
 }
