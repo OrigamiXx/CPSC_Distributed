@@ -1,4 +1,4 @@
-2A-2
+# 2A-2
 (1) Construct and describe a scenario with a Raft cluster of 3 or 5 nodes where the leader election protocol fails to elect a leader. 
 Hint: in your description, you may decide when timers time out or not time out, or arbitrate when RPCs get sent or processed.
 
