@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package user_service;
+
+option go_package = "cs426.yale.edu/lab1/user_service/proto";
+
+import "failure_injection/proto/failure_injection.proto";
+
+message UserCoefficients {
+    // a map of feature id to coefficient representing a sparse vector.
+    map<int32, uint64> coeffs = 1;
+}
+
+message GetUserRequest {
+    repeated uint64 user_ids = 1;
+}
+
+message UserInfo {
+    uint64 user_id = 1;
+    string username = 2;
+    string email = 3;
+    string profile_url = 4;
+
+    // user_ids this user subscribes to
+    repeated uint64 subscribed_to = 5;
+    // ranking coefficients for this user
+    UserCoefficients user_coefficients = 6;
+    // video_ids of videos this user likes
+    repeated uint64 liked_videos = 7;
+}
+
+message GetUserResponse {
+    repeated UserInfo users = 1;
+}
+
+service UserService {
+    rpc GetUser(GetUserRequest) returns(GetUserResponse) {}
+
+    // Admin API for failure injection
+    rpc SetInjectionConfig(failure_injection.SetInjectionConfigRequest) returns(failure_injection.SetInjectionConfigResponse) {}
+}

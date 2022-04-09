@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+    name: video-rec
+    labels:
+        app: video-rec
+spec:
+    replicas: 1
+    selector:
+        matchLabels:
+            app: video-rec
+    template:
+        metadata:
+            labels:
+                app: video-rec
+        spec:
+            imagePullSecrets:
+                - name: docker-credentials
+            containers:
+                - name: video-rec
+                  image: registry.cs426.cloud/jy644/video-rec-service:latest
+                  ports:
+                    - containerPort: 8080
+                  args: ["-batch-size=50", "--user-service=user-service.default:8081", "--video-service=video-service.default:8082"]
+                  imagePullPolicy: Always

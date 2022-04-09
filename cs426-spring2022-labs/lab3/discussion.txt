@@ -1,0 +1,161 @@
+Discussion
+
+A1
+Dial() is quite similar to socket() and connect(), in the sense it establishes a connection by giving an address and then allocating the necessary port and resource for the connection.
+This is cooperated by the listen() on the server side.
+
+A2
+Many issues could possibly cause a dial failure.
+Bad connection, slow internet -- DeadlineExceeded, as name suggests, operation expired before completion
+Server broken -- Internal, bad programming, wrong intructions, etc.
+Other errors such bad error codes returned, rare issues -- Unknown
+No ports available -- ResourceExhausted or Unavailable, I incline to ResourceExhausted which indiates the requested port is busy now
+
+A3
+When GetUser is called, send(), recv() are definitely used, in the sense that client sends a request rpc, and server receives it. Vice versa. During these calls the standard
+read() and write() system calls will be used. These functions might throw errors when there is a sigmentation fault or mathematics fault(like divide by 0). read() and write() can generate these
+basic sigmentation fault or mathematics fault, but when it propagates to the network errors it will be shown as internal errors. In terms of network issues, an expired connection
+may give a timeout error or a DeadlineExceeded code,
+
+In addition to those, GetUser() may have its own checks that still throw errors even if all related netorks are fine. It might throw a NotFound code if the user looked for is NotFound
+found, or Unimplemented or the service is unfinished.
+
+A4
+I believe if you do so in only one call, it will be fine. If you manage of save a local copy of the userclient after using user_conn to establish connection, you can reassign
+the user_conn variable to a connection to a video service, though you cannot make anymore userclients anymore.
+
+However, in concurrent situations this will definitely cause issues, since there are many threads at different stages of the call thus using the conn variable for different
+purposes. It will likely fail after a certain amount of concurrent calls and yield a large amount of failed calls.
+
+A6
+2022/02/15 05:23:35 This user has name Parker9611, their email is faekessler@lang.biz, and their profile URL is https://user-service.localhost/profile/200172
+2022/02/15 05:23:35 Recommended videos:
+2022/02/15 05:23:35   [0] Video id=1331, title="Perucluster: program", author=Viva Howell, url=https://video-data.localhost/blob/1331
+2022/02/15 05:23:35   [1] Video id=1183, title="Importanceshall: input", author=Brando Osinski, url=https://video-data.localhost/blob/1183
+2022/02/15 05:23:35   [2] Video id=1272, title="purple Horseradish", author=Heidi Jacobi, url=https://video-data.localhost/blob/1272
+2022/02/15 05:23:35   [3] Video id=1111, title="The elated goldfish's speed", author=Autumn Waelchi, url=https://video-data.localhost/blob/1111
+2022/02/15 05:23:35   [4] Video id=1345, title="Mobthink: transmit", author=Constantin Casper, url=https://video-data.localhost/blob/1345
+2022/02/15 05:23:35 
+
+2022/02/15 05:23:35 Test case 1: UserId=204054
+2022/02/15 05:23:35 Recommended videos:
+2022/02/15 05:23:35   [0] Video id=1085, title="Impalaclose: index", author=Blanche Little, url=https://video-data.localhost/blob/1085
+2022/02/15 05:23:35   [1] Video id=1047, title="tender towards", author=Renee Blick, url=https://video-data.localhost/blob/1047
+2022/02/15 05:23:35   [2] Video id=1106, title="fancy on", author=Will Ullrich, url=https://video-data.localhost/blob/1106
+2022/02/15 05:23:35   [3] Video id=1211, title="Sunshineshould: input", author=Stevie Wyman, url=https://video-data.localhost/blob/1211
+2022/02/15 05:23:35   [4] Video id=1314, title="evil elsewhere", author=Darrel Zemlak, url=https://video-data.localhost/blob/1314
+2022/02/15 05:23:35 Test case 2: UserId=203584
+2022/02/15 05:23:36 Recommended videos:
+2022/02/15 05:23:36   [0] Video id=1015, title="Officebow: hack", author=Eliane Simonis, url=https://video-data.localhost/blob/1015
+2022/02/15 05:23:36   [1] Video id=1380, title="splendid Lettuce", author=Belle Harber, url=https://video-data.localhost/blob/1380
+2022/02/15 05:23:36   [2] Video id=1268, title="successful down", author=Melyssa Borer, url=https://video-data.localhost/blob/1268
+2022/02/15 05:23:36   [3] Video id=1040, title="MediumTurquoisecloud: calculate", author=Fanny Botsford, url=https://video-data.localhost/blob/1040
+2022/02/15 05:23:36   [4] Video id=1344, title="charming towards", author=Orlo Feil, url=https://video-data.localhost/blob/1344
+2022/02/15 05:23:36 OK: basic tests passed!
+
+
+A8
+If you are determined to send them concurrently, you can do so but must use a lock to protect each go routine every carefully, using different locks to speed up the process.
+There will be hundreds of calls to GetTopVideos, and if each call also spawns quite a few go routines(concurrency over concurrency), there are super high chances of race conditioning. Incorrect index caused by race conditon
+may also lead to sigmentation faults.
+There is definitely room for imporvement, but it will be hard to debug and have massive overhead. We also have to consider if the server allows us to send that many requests.
+
+However I have chosen to send it sequentially because it's easier to manage, but actually already have quite some caveats when sending the requests sequentially. Handling errors incorrectly
+for one of the batch request will case the rest of requests to fail.
+
+B2
+Failrate = 10 on video service
+Batchsize = 10 on all three services.
+The impletation might not be seeing stale_responses at the beginning if the client got unlucky at the start and will only start giving stale responses 10
+seconds later after it can successfully get the trending videos for one time.
+
+now_us  total_requests  total_errors    active_requests user_service_errors     video_service_errors    average_latency_ms      p99_latency_ms  stale_responses
+1644972794417367        0       0       0       0       0       0.00    0.00    0
+1644972795418292        0       0       0       0       0       0.00    0.00    0
+1644972796422002        0       0       0       0       0       0.00    0.00    0
+1644972797421624        0       0       0       0       0       0.00    0.00    0
+1644972798418486        0       0       0       0       0       0.00    0.00    0
+1644972799417832        17      5       2       0       5       255.84  534.73  5
+1644972800417942        27      7       2       0       7       228.03  534.73  7
+1644972801419532        35      8       4       0       8       238.07  534.73  8
+1644972802422515        45      10      4       0       10      256.46  534.73  10
+1644972803419285        57      15      2       0       15      260.26  534.73  15
+1644972804422002        65      18      4       0       18      255.44  534.73  18
+1644972805421898        77      20      2       0       20      266.50  534.73  20
+1644972806421894        84      23      5       0       23      262.37  534.73  23
+1644972807418027        97      26      2       0       26      274.11  534.73  26
+1644972808418089        106     30      3       0       30      272.55  526.51  30
+1644972809421003        117     32      2       0       32      279.02  526.51  32
+1644972810421383        126     34      3       0       34      277.21  526.51  34
+1644972811420499        135     35      4       0       35      284.06  526.51  35
+1644972812419741        145     36      4       0       36      288.81  526.51  36
+1644972813419725        155     37      4       0       37      296.05  526.51  37
+1644972814422334        165     41      4       0       41      294.51  526.51  41
+1644972815420165        178     41      1       0       41      292.21  526.51  41
+1644972816421132        186     42      3       0       42      291.67  526.51  42
+1644972817422898        197     43      2       0       43      291.84  526.51  43
+1644972818418623        206     47      3       0       47      286.71  504.23  47
+1644972819418257        216     47      3       0       47      292.47  504.23  47
+1644972820420953        226     48      3       0       48      292.89  504.23  48
+1644972821421044        236     53      3       0       53      286.42  504.23  53
+1644972822422157        246     56      3       0       56      286.79  504.23  56
+1644972823419262        258     61      1       0       61      284.72  504.23  61
+1644972824422685        267     65      2       0       65      283.30  504.23  65
+1644972825420359        276     68      3       0       68      283.76  504.23  68
+1644972826421009        287     70      2       0       70      284.44  504.23  70
+1644972827421763        296     72      3       0       72      283.91  504.23  72
+1644972828419818        305     73      4       0       73      286.31  494.46  73
+1644972829420181        315     77      4       0       77      286.05  504.23  77
+1644972830422291        327     81      2       0       81      286.72  512.50  81
+1644972831420869        337     86      2       0       86      284.00  512.50  86
+1644972832422787        346     89      3       0       89      283.32  526.51  89
+1644972833421963        355     92      4       0       92      284.94  603.54  92
+1644972834420627        365     92      4       0       92      291.80  644.44  92
+1644972835422958        376     95      3       0       95      292.13  644.44  95
+1644972836422956        387     96      2       0       96      292.44  644.44  96
+1644972837421205        397     97      2       0       97      290.57  644.44  97
+1644972838420928        408     101     1       0       101     286.62  639.08  101
+1644972839418495        416     105     3       0       105     284.03  639.08  105
+1644972840419584        426     109     3       0       109     283.72  639.08  109
+1644972841419696        433     112     6       0       112     283.44  639.08  112
+1644972842422364        447     115     2       0       115     285.99  639.08  115
+1644972843419967        456     117     3       0       117     285.91  639.08  117
+1644972844420660        466     118     3       0       118     288.08  639.08  118
+1644972845420872        477     122     2       0       122     287.79  639.08  122
+1644972846420725        485     124     4       0       124     288.66  639.08  124
+1644972847422766        497     127     0       0       127     288.72  639.08  127
+ExtraCredit2
+We can achieve this by sending mutiple batches in the same request. 
+
+C1
+Retrying might be bad because in some cases it is just repeating useless efforts, such as bad internet. It consumes resource and makes the entire call takes longer time,
+especially with batched request since each batch is retried.
+
+However, in our test cases where the fail rate is entirely random, retrying is actually very helping as it effectively halves the error 
+rate(trying two times instead of one). I have seen the error rate halved in mutiple batch and failrate settings.
+
+C2
+I have implemented it as return cached result even if after expiration, as that is what we often see people do. Youtube will remind you that your login information is outdated, and still will
+just give some general reccomendations.
+There really aren't that much tradeoffs, since the trending videos are cached as a server variable in VideoRecServiceServer struct on all calls, so it's just pulling data. There are no
+tradeoffs except for a few more if-else checks.
+
+C3
+Instead of only cacheing trending videos, we can actually cache personal reccomendations as well. This is not very hard to change, but basically what we are doing is making the
+GetTopVideos a proactively go routine that grabs reccomendation infos on a time basis. The tradeoff is of course more resources, both network and computational, are consumed as this might
+amount to more automatic calls to GetTopVideos then manually calling it. On the bright side, we will only be down in service if video service is down for a very long time.
+
+Another way to improve reliability is to increase batch size. Although this will be limited to how video service and user service are set. More batches lead to more requests, thus bigger batches
+improves overall reliability.
+
+C4
+Indeed making establishments cost a lot of time thus interferes with performance. First of all, repeatedly calling itself is a network consuming action, and secondly, each call to 
+GetTopVideos is essentially making their own copy of this connection when they can be using the same one.
+
+To imporve this, use only two Dial() across the entire call to GetTopVideos, one for user service and one for video service. On top of this, further improve performance by making the
+user client and video client as server variables defines in the VideoRecServiceServer struct, thus all calls can share a single client object thus saving much memory and network overhead.
+This yielded in a 150ms speed improvement for me. This however does limit the GetTopVideos to work for only one user, thus limiting designs that possibly would allow GetTopVideos to
+pull reccomendations for multiple users in one call. This is also dangerous as shared objects is usually not thread safe in concurreny routines thus need to be carefully protected with locks.
+
+Finally, this might not be good for load balancing as we are using one connection and a few requests for everything related to this GetTopVideos call. If we are in a high throughout environemnt
+where we might have thousands of reccomendations this does not allow us to balance the load on video service optimally.
